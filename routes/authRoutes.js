@@ -11,4 +11,10 @@ router.post('/login', authController.userLogin);
 router.get('/profile/:id', verifyToken, authController.userProfile);
 router.put('/profile/:id', verifyToken, authController.updateUserProfile);
 
+// Address Routes
+router.get('/address/:id', verifyToken, authController.getAddresses);
+router.post('/address/:id', verifyToken, authController.addAddress);
+router.put('/address/:id/:addressId', verifyToken, authController.updateAddress);
+router.delete('/address/:id/:addressId', verifyToken, authController.deleteAddress);
+
 module.exports = router;

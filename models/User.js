@@ -21,7 +21,18 @@ const userSchema = new mongoose.Schema({
     required: true
   },
   address: [{
-    type: String
+    addressType: { type: String, required: true },
+    firstName: { type: String, required: true },
+    lastName: { type: String, required: true },
+    street: { type: String, required: true },
+    apartment: { type: String },
+    city: { type: String, required: true },
+    state: { type: String, required: true },
+    postcode: { type: String, required: true },
+    email: { type: String, required: true },
+    phone: { type: String, required: true },
+    orderNotes: { type: String },
+    isDefault: { type: Boolean, default: false }
   }],
   role: {
     type: String,
