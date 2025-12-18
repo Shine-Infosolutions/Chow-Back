@@ -8,7 +8,7 @@ exports.getSubcategories = async (req, res) => {
     const skip = (page - 1) * limit;
 
     const subcategories = await Subcategory.find()
-      .populate('category')
+      .populate('categories')
       .skip(skip)
       .limit(limit)
       .sort({ createdAt: -1 });
@@ -32,7 +32,7 @@ exports.getSubcategories = async (req, res) => {
 // Get subcategory by ID
 exports.getSubcategoryById = async (req, res) => {
   try {
-    const subcategory = await Subcategory.findById(req.params.id).populate('category');
+    const subcategory = await Subcategory.findById(req.params.id).populate('categories');
     if (!subcategory) return res.status(404).json({ message: 'Subcategory not found' });
     res.json(subcategory);
   } catch (error) {
@@ -43,7 +43,7 @@ exports.getSubcategoryById = async (req, res) => {
 // Get subcategories by category
 exports.getSubcategoriesByCategory = async (req, res) => {
   try {
-    const subcategories = await Subcategory.find({ category: req.params.categoryId }).populate('category');
+    const subcategories = await Subcategory.find({ categories: req.params.categoryId }).populate('categories');
     res.json(subcategories);
   } catch (error) {
     res.status(500).json({ message: error.message });

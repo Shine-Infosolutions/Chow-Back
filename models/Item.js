@@ -6,11 +6,11 @@ const itemSchema = new mongoose.Schema({
     required: true,
     trim: true
   },
-  category: {
+  categories: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Category',
     required: true
-  },
+  }],
   subcategories: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Subcategory'

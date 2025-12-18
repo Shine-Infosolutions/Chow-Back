@@ -9,7 +9,7 @@ exports.getItems = async (req, res) => {
     const skip = (page - 1) * limit;
 
     const items = await Item.find()
-      .populate('category subcategories')
+      .populate('categories subcategories')
       .skip(skip)
       .limit(limit)
       .sort({ createdAt: -1 });
@@ -33,7 +33,7 @@ exports.getItems = async (req, res) => {
 // Get item by ID
 exports.getItemById = async (req, res) => {
   try {
-    const item = await Item.findById(req.params.id).populate('category subcategories');
+    const item = await Item.findById(req.params.id).populate('categories subcategories');
     if (!item) return res.status(404).json({ message: 'Item not found' });
     res.json(item);
   } catch (error) {
@@ -44,7 +44,7 @@ exports.getItemById = async (req, res) => {
 // Get items by category
 exports.getItemsByCategory = async (req, res) => {
   try {
-    const items = await Item.find({ category: req.params.categoryId }).populate('category subcategories');
+    const items = await Item.find({ categories: req.params.categoryId }).populate('categories subcategories');
     res.json(items);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -75,7 +75,7 @@ exports.getFeaturedItems = async (req, res) => {
       default: return res.status(400).json({ message: 'Invalid type' });
     }
     
-    const items = await Item.find(query).populate('category subcategories');
+    const items = await Item.find(query).populate('categories subcategories');
     res.json(items);
   } catch (error) {
     res.status(500).json({ message: error.message });

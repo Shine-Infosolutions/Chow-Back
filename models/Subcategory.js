@@ -10,11 +10,11 @@ const subcategorySchema = new mongoose.Schema({
     type: String,
     trim: true
   },
-  category: {
+  categories: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Category',
     required: true
-  },
+  }],
   status: {
     type: String,
     enum: ['active', 'inactive'],
