@@ -3,9 +3,9 @@ const Ticket = require('../models/Ticket');
 // Create ticket
 exports.createTicket = async (req, res) => {
   try {
-    const { customerId, subject, description } = req.body;
-    if (!customerId || !subject || !description) {
-      return res.status(400).json({ success: false, message: 'customerId, subject, and description are required' });
+    const { fullName, email, subject, message } = req.body;
+    if (!fullName || !email || !subject || !message) {
+      return res.status(400).json({ success: false, message: 'fullName, email, subject, and message are required' });
     }
     const ticket = new Ticket(req.body);
     await ticket.save();
@@ -21,7 +21,7 @@ exports.createTicket = async (req, res) => {
 // Get all tickets
 exports.getAllTickets = async (req, res) => {
   try {
-    const tickets = await Ticket.find().populate('customerId orderId');
+    const tickets = await Ticket.find();
     res.json({ success: true, tickets });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -34,7 +34,7 @@ exports.getTicketById = async (req, res) => {
     if (!req.params.id.match(/^[0-9a-fA-F]{24}$/)) {
       return res.status(400).json({ success: false, message: 'Invalid ticket ID' });
     }
-    const ticket = await Ticket.findById(req.params.id).populate('customerId orderId');
+    const ticket = await Ticket.findById(req.params.id);
     if (!ticket) {
       return res.status(404).json({ success: false, message: 'Ticket not found' });
     }

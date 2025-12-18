@@ -1,23 +1,24 @@
 const mongoose = require('mongoose');
 
 const ticketSchema = new mongoose.Schema({
-  userId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'user',
+  fullName: {
+    type: String,
     required: true
   },
-  orderId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Order',
-    required: false
+  email: {
+    type: String,
+    required: true
+  },
+  phone: {
+    type: String
   },
   subject: {
     type: String,
     required: true
   },
-  description: {
+  message: {
     type: String,
-    required: false
+    required: true
   },
   status: {
     type: String,
@@ -26,12 +27,8 @@ const ticketSchema = new mongoose.Schema({
   },
   type: {
     type: String,
-    enum: ['order-failed', 'payment-issue', 'delivery-problem', 'general'],
-    default: 'general'
-  },
-  resolutionNotes: {
-    type: String,
-    required: false
+    enum: ['custom-request', 'order-issue', 'general'],
+    default: 'custom-request'
   }
 }, {
   timestamps: true

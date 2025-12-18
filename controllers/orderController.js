@@ -37,17 +37,30 @@ exports.updateOrderStatus = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid status' });
     }
 
-    const order = await Order.findByIdAndUpdate(
-      req.params.id,
-      { status },
-      { new: true, runValidators: true }
-    ).populate('userId', 'name email phone').populate('items.itemId', 'name price');
-
+    const order = await Order.findById(req.params.id);
     if (!order) {
       return res.status(404).json({ success: false, message: 'Order not found' });
     }
 
-    res.json({ success: true, message: 'Order status updated successfully', order });
+    // Update stock when order is delivered
+    if (status === 'delivered' && order.status !== 'delivered') {
+      const Item = require('../models/Item');
+      for (const item of order.items) {
+        await Item.findByIdAndUpdate(
+          item.itemId,
+          { $inc: { stockQty: -item.quantity } }
+        );
+      }
+    }
+
+    order.status = status;
+    await order.save();
+
+    const updatedOrder = await Order.findById(order._id)
+      .populate('userId', 'name email phone')
+      .populate('items.itemId', 'name price');
+
+    res.json({ success: true, message: 'Order status updated successfully', order: updatedOrder });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
