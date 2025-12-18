@@ -3,8 +3,19 @@ const Order = require('../models/Order');
 // Get all orders
 exports.getAllOrders = async (req, res) => {
   try {
-    const orders = await Order.find().populate('userId', 'name email phone').populate('items.itemId', 'name price');
-    res.json({ success: true, orders });
+    const orders = await Order.find()
+      .populate('userId', 'name email phone address')
+      .populate('items.itemId', 'name price');
+    
+    const ordersWithAddress = orders.map(order => {
+      const addressDetails = order.userId.address.id(order.addressId);
+      return {
+        ...order.toObject(),
+        deliveryAddress: addressDetails
+      };
+    });
+    
+    res.json({ success: true, orders: ordersWithAddress });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -13,11 +24,22 @@ exports.getAllOrders = async (req, res) => {
 // Get order by ID
 exports.getOrderById = async (req, res) => {
   try {
-    const order = await Order.findById(req.params.id).populate('userId', 'name email phone').populate('items.itemId', 'name price');
+    const order = await Order.findById(req.params.id)
+      .populate('userId', 'name email phone address')
+      .populate('items.itemId', 'name price');
+    
     if (!order) {
       return res.status(404).json({ success: false, message: 'Order not found' });
     }
-    res.json({ success: true, order });
+
+    // Get address details from user's saved addresses
+    const addressDetails = order.userId.address.id(order.addressId);
+    const orderWithAddress = {
+      ...order.toObject(),
+      deliveryAddress: addressDetails
+    };
+
+    res.json({ success: true, order: orderWithAddress });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -46,10 +68,24 @@ exports.updateOrderStatus = async (req, res) => {
     if (status === 'delivered' && order.status !== 'delivered') {
       const Item = require('../models/Item');
       for (const item of order.items) {
-        await Item.findByIdAndUpdate(
-          item.itemId,
-          { $inc: { stockQty: -item.quantity } }
-        );
+        try {
+          if (item.itemId) {
+            const updatedItem = await Item.findByIdAndUpdate(
+              item.itemId,
+              { $inc: { stockQty: -item.quantity } },
+              { new: true }
+            );
+            if (!updatedItem) {
+              console.warn(`Item with ID ${item.itemId} not found for stock update`);
+            } else {
+              console.log(`Stock updated for item ${updatedItem.name}: ${updatedItem.stockQty}`);
+            }
+          } else {
+            console.warn('Item ID is missing for stock update');
+          }
+        } catch (stockError) {
+          console.error(`Error updating stock for item ${item.itemId}:`, stockError.message);
+        }
       }
     }
 
@@ -142,11 +178,27 @@ exports.updateOrderAndPaymentStatus = async (req, res) => {
 exports.getMyOrders = async (req, res) => {
   try {
     const orders = await Order.find({ userId: req.params.userId })
-      .populate('userId', 'name email phone')
+      .populate('userId', 'name email phone address')
       .populate('items.itemId', 'name price')
       .sort({ createdAt: -1 });
     
-    res.json({ success: true, orders });
+    const ordersWithAddress = orders.map(order => {
+      const addressDetails = order.userId.address.id(order.addressId);
+      return {
+        ...order.toObject(),
+        deliveryAddress: addressDetails || {
+          _id: order.addressId,
+          firstName: 'Address',
+          lastName: 'Not Found',
+          street: 'Address not available',
+          city: 'N/A',
+          state: 'N/A',
+          postcode: 'N/A'
+        }
+      };
+    });
+    
+    res.json({ success: true, orders: ordersWithAddress });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -155,6 +207,7 @@ exports.getMyOrders = async (req, res) => {
 // Create new order
 exports.createOrder = async (req, res) => {
   try {
+    console.log('Creating order with data:', req.body);
     const { userId, addressId, items, totalAmount } = req.body;
 
     if (!userId || !addressId || !items || !totalAmount) {
@@ -163,13 +216,26 @@ exports.createOrder = async (req, res) => {
 
     const order = new Order({ userId, addressId, items, totalAmount });
     await order.save();
+    console.log('Order saved successfully');
 
     const populatedOrder = await Order.findById(order._id)
-      .populate('userId', 'name email phone')
+      .populate('userId', 'name email phone address')
       .populate('items.itemId', 'name price');
 
-    res.status(201).json({ success: true, order: populatedOrder });
+    const addressDetails = populatedOrder.userId.address.id(addressId);
+    const orderWithAddress = {
+      ...populatedOrder.toObject(),
+      deliveryAddress: addressDetails || {
+        _id: addressId,
+        firstName: 'Address',
+        lastName: 'Not Found',
+        street: 'Address not available'
+      }
+    };
+
+    res.status(201).json({ success: true, order: orderWithAddress });
   } catch (error) {
+    console.error('Error creating order:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 };
