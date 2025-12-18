@@ -10,13 +10,10 @@ const subcategorySchema = new mongoose.Schema({
     type: String,
     trim: true
   },
-  category: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Category'
-  },
   categories: [{
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Category'
+    ref: 'Category',
+    required: true
   }],
   status: {
     type: String,
