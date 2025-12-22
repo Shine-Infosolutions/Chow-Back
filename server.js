@@ -30,6 +30,7 @@ const startServer = async () => {
     const userRoutes = require('./routes/userRoutes');
     const adminRoutes = require('./routes/adminRoutes');
     const distanceRoutes = require('./routes/distanceRoutes');
+    const paymentRoutes = require('./routes/paymentRoutes');
 
     app.use('/api/categories', categoryRoutes);
     app.use('/api/subcategories', subcategoryRoutes);
@@ -42,6 +43,7 @@ const startServer = async () => {
     app.use('/api/users', userRoutes);
     app.use('/api/admin', adminRoutes);
     app.use('/api', distanceRoutes);
+    app.use('/api/payment', paymentRoutes);
 
     // Basic route
     app.get('/', (req, res) => {

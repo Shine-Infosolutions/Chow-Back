@@ -52,7 +52,26 @@ const orderSchema = new mongoose.Schema({
     enum: ['pending', 'paid', 'failed'],
     default: 'pending',
     index: true
-  }
+  },
+  razorpayData: [{
+    orderId: String,
+    paymentId: String,
+    signature: String,
+    amount: Number,
+    currency: String,
+    status: String,
+    method: String,
+    bank: String,
+    wallet: String,
+    vpa: String,
+    email: String,
+    contact: String,
+    fee: Number,
+    tax: Number,
+    errorCode: String,
+    errorDescription: String,
+    createdAt: { type: Date, default: Date.now }
+  }]
 }, {
   timestamps: true
 });

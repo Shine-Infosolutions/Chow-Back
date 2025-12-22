@@ -124,7 +124,7 @@ exports.getMyOrders = async (req, res) => {
 // Create new order
 exports.createOrder = async (req, res) => {
   try {
-    const { userId, addressId, items, totalAmount, distance, deliveryFee } = req.body;
+    const { userId, addressId, items, totalAmount, distance, deliveryFee, razorpayData } = req.body;
 
     if (!userId || !addressId || !items?.length || !totalAmount) {
       return res.status(400).json({ 
@@ -136,6 +136,10 @@ exports.createOrder = async (req, res) => {
     const orderData = { userId, addressId, items, totalAmount };
     if (distance !== undefined) orderData.distance = distance;
     if (deliveryFee !== undefined) orderData.deliveryFee = deliveryFee;
+    if (razorpayData) {
+      orderData.razorpayData = [razorpayData];
+      orderData.paymentStatus = razorpayData.status === 'paid' ? 'paid' : 'failed';
+    }
 
     const order = new Order(orderData);
     await order.save();
