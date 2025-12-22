@@ -206,13 +206,13 @@ exports.getMyOrders = async (req, res) => {
 exports.createOrder = async (req, res) => {
   try {
 
-    const { userId, addressId, items, totalAmount } = req.body;
+    const { userId, addressId, items, totalAmount, distance, deliveryFee } = req.body;
 
     if (!userId || !addressId || !items || !totalAmount) {
       return res.status(400).json({ success: false, message: 'UserId, addressId, items, and totalAmount are required' });
     }
 
-    const order = new Order({ userId, addressId, items, totalAmount });
+    const order = new Order({ userId, addressId, items, totalAmount, distance, deliveryFee });
     await order.save();
 
 

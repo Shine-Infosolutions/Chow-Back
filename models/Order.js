@@ -25,6 +25,12 @@ const orderSchema = new mongoose.Schema({
       required: true
     }
   }],
+  distance: {
+    type: Number,
+  },
+  deliveryFee: {
+    type: Number,
+  },
   totalAmount: {
     type: Number,
     required: true
