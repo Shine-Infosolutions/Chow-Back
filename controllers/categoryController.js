@@ -10,7 +10,7 @@ exports.getCategories = async (req, res) => {
     const categories = await Category.find()
       .skip(skip)
       .limit(limit)
-      .sort({ createdAt: -1 });
+      .sort({ displayRank: 1, createdAt: -1 });
     
     const total = await Category.countDocuments();
     
@@ -42,22 +42,51 @@ exports.getCategoryById = async (req, res) => {
 // Create category
 exports.createCategory = async (req, res) => {
   try {
+    const { displayRank } = req.body;
+    
+    // Check if displayRank already exists
+    if (displayRank !== undefined && displayRank > 0) {
+      const existingCategory = await Category.findOne({ displayRank });
+      if (existingCategory) {
+        return res.status(400).json({ 
+          success: false,
+          message: `Rank ${displayRank} already assigned to "${existingCategory.name}"` 
+        });
+      }
+    }
+    
     const category = new Category(req.body);
     const savedCategory = await category.save();
-    res.status(201).json(savedCategory);
+    res.status(201).json({ success: true, category: savedCategory });
   } catch (error) {
-    res.status(400).json({ message: error.message });
+    res.status(400).json({ success: false, message: error.message });
   }
 };
 
 // Update category
 exports.updateCategory = async (req, res) => {
   try {
+    const { displayRank } = req.body;
+    
+    // Check if displayRank already exists for another category
+    if (displayRank !== undefined && displayRank > 0) {
+      const existingCategory = await Category.findOne({ 
+        displayRank, 
+        _id: { $ne: req.params.id } 
+      });
+      if (existingCategory) {
+        return res.status(400).json({ 
+          success: false,
+          message: `Rank ${displayRank} already assigned to "${existingCategory.name}"` 
+        });
+      }
+    }
+    
     const category = await Category.findByIdAndUpdate(req.params.id, req.body, { new: true });
-    if (!category) return res.status(404).json({ message: 'Category not found' });
-    res.json(category);
+    if (!category) return res.status(404).json({ success: false, message: 'Category not found' });
+    res.json({ success: true, category });
   } catch (error) {
-    res.status(400).json({ message: error.message });
+    res.status(400).json({ success: false, message: error.message });
   }
 };
 
@@ -67,6 +96,18 @@ exports.deleteCategory = async (req, res) => {
     const category = await Category.findByIdAndDelete(req.params.id);
     if (!category) return res.status(404).json({ message: 'Category not found' });
     res.json({ message: 'Category deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// Get all categories for homepage (sorted by display rank)
+exports.getAllCategories = async (req, res) => {
+  try {
+    const categories = await Category.find()
+      .sort({ displayRank: 1, createdAt: -1 });
+    
+    res.json({ categories });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
