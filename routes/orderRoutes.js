@@ -20,7 +20,4 @@ router.patch('/:id/status', orderController.updateOrderStatus);
 // Update payment status
 router.patch('/:id/payment-status', orderController.updatePaymentStatus);
 
-// Update both order and payment status
-router.patch('/:id', orderController.updateOrderAndPaymentStatus);
-
 module.exports = router;
