@@ -21,8 +21,27 @@ exports.createTicket = async (req, res) => {
 // Get all tickets
 exports.getAllTickets = async (req, res) => {
   try {
-    const tickets = await Ticket.find();
-    res.json({ success: true, tickets });
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
+
+    const tickets = await Ticket.find()
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
+    
+    const total = await Ticket.countDocuments();
+    
+    res.json({ 
+      success: true, 
+      tickets,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit)
+      }
+    });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }

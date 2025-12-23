@@ -4,6 +4,10 @@ const Item = require('../models/Item');
 // Get failed orders
 exports.getFailedOrders = async (req, res) => {
   try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
+
     const failedOrders = await Order.find({
       $or: [
         { status: 'failed' },
@@ -12,7 +16,16 @@ exports.getFailedOrders = async (req, res) => {
     })
       .populate('userId', 'name email phone address')
       .populate('items.itemId', 'name price category subcategory')
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
+    
+    const total = await Order.countDocuments({
+      $or: [
+        { status: 'failed' },
+        { paymentStatus: 'failed' }
+      ]
+    });
     
     const tableData = [];
     
@@ -77,7 +90,16 @@ exports.getFailedOrders = async (req, res) => {
       });
     });
     
-    res.json({ success: true, orders: tableData });
+    res.json({ 
+      success: true, 
+      orders: tableData,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit)
+      }
+    });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -86,10 +108,18 @@ exports.getFailedOrders = async (req, res) => {
 // Get all orders
 exports.getAllOrders = async (req, res) => {
   try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
+
     const orders = await Order.find()
       .populate('userId', 'name email phone address')
       .populate('items.itemId', 'name price category subcategory')
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
+    
+    const total = await Order.countDocuments();
     
     const tableData = [];
     
@@ -154,7 +184,16 @@ exports.getAllOrders = async (req, res) => {
       });
     });
     
-    res.json({ success: true, orders: tableData });
+    res.json({ 
+      success: true, 
+      orders: tableData,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit)
+      }
+    });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
