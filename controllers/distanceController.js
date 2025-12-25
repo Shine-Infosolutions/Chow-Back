@@ -21,7 +21,7 @@ const calculateDistance = async (req, res) => {
     }
 
     const [baseCoords, userCoords] = await Promise.all([
-      getCoordinates('273001'),
+      getCoordinates(process.env.BASE_PINCODE || '273001'),
       getCoordinates(pincode)
     ]);
 

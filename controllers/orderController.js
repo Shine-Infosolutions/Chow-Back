@@ -105,21 +105,27 @@ exports.getFailedOrders = async (req, res) => {
   }
 };
 
-// Get all orders
+// Get all orders (excluding failed orders)
 exports.getAllOrders = async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
 
-    const orders = await Order.find()
+    const orders = await Order.find({
+      status: { $ne: 'failed' },
+      paymentStatus: { $ne: 'failed' }
+    })
       .populate('userId', 'name email phone address')
       .populate('items.itemId', 'name price category subcategory')
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit);
     
-    const total = await Order.countDocuments();
+    const total = await Order.countDocuments({
+      status: { $ne: 'failed' },
+      paymentStatus: { $ne: 'failed' }
+    });
     
     const tableData = [];
     
@@ -303,10 +309,14 @@ exports.updatePaymentStatus = async (req, res) => {
   }
 };
 
-// Get orders by user ID
+// Get orders by user ID (excluding failed orders)
 exports.getMyOrders = async (req, res) => {
   try {
-    const orders = await Order.find({ userId: req.params.userId })
+    const orders = await Order.find({ 
+      userId: req.params.userId,
+      status: { $ne: 'failed' },
+      paymentStatus: { $ne: 'failed' }
+    })
       .populate('userId', 'name email phone address')
       .populate('items.itemId', 'name price')
       .sort({ createdAt: -1 });
@@ -330,55 +340,13 @@ exports.getMyOrders = async (req, res) => {
   }
 };
 
-// Create new order
+// Create new order (deprecated - use payment/create-order instead)
 exports.createOrder = async (req, res) => {
   try {
-    const { userId, addressId, items, totalAmount, distance, deliveryFee, razorpayData } = req.body;
-
-    if (!userId || !addressId || !items?.length || !totalAmount) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'UserId, addressId, items, and totalAmount are required' 
-      });
-    }
-
-    const orderData = { userId, addressId, items, totalAmount };
-    if (distance !== undefined) orderData.distance = distance;
-    if (deliveryFee !== undefined) orderData.deliveryFee = deliveryFee;
-    if (razorpayData) {
-      orderData.razorpayData = [razorpayData];
-      orderData.paymentStatus = razorpayData.status === 'paid' ? 'paid' : 'failed';
-    }
-
-    const order = new Order(orderData);
-    await order.save();
-
-    // Update stock immediately when order is created
-    await Promise.all(order.items.map(async (item) => {
-      if (item.itemId) {
-        await Item.findByIdAndUpdate(
-          item.itemId,
-          { $inc: { stockQty: -item.quantity } },
-          { new: true }
-        ).catch(err => console.error(`Stock update failed for ${item.itemId}:`, err));
-      }
-    }));
-
-    const populatedOrder = await Order.findById(order._id)
-      .populate('userId', 'name email phone address')
-      .populate('items.itemId', 'name price');
-
-    const orderWithAddress = {
-      ...populatedOrder.toObject(),
-      deliveryAddress: populatedOrder.userId?.address?.id(addressId) || {
-        _id: addressId,
-        firstName: 'Address',
-        lastName: 'Not Found',
-        street: 'Address not available'
-      }
-    };
-
-    res.status(201).json({ success: true, order: orderWithAddress });
+    res.status(400).json({ 
+      success: false, 
+      message: 'Please use /api/payment/create-order endpoint for creating orders' 
+    });
   } catch (error) {
     console.error('Error creating order:', error);
     res.status(500).json({ success: false, error: error.message });
