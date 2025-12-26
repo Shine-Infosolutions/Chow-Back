@@ -3,47 +3,42 @@ const cors = require('cors');
 const connectDB = require('./config/db');
 require('dotenv').config();
 
+const CORS_ORIGINS = [
+  'https://chow-front.vercel.app', 
+  'http://localhost:3000', 
+  'http://localhost:5173'
+];
+
+const routes = [
+  { path: '/api/categories', module: './routes/categoryRoutes' },
+  { path: '/api/subcategories', module: './routes/subcategoryRoutes' },
+  { path: '/api/items', module: './routes/itemRoutes' },
+  { path: '/api/dashboard', module: './routes/dashboardRoutes' },
+  { path: '/api/search', module: './routes/searchRoutes' },
+  { path: '/api/tickets', module: './routes/tickets' },
+  { path: '/api/auth', module: './routes/authRoutes' },
+  { path: '/api/orders', module: './routes/orderRoutes' },
+  { path: '/api/users', module: './routes/userRoutes' },
+  { path: '/api/admin', module: './routes/adminRoutes' },
+  { path: '/api', module: './routes/distanceRoutes' },
+  { path: '/api/payment', module: './routes/paymentRoutes' }
+];
+
 const startServer = async () => {
   try {
-    // Connect to database first
     await connectDB();
     
     const app = express();
     const PORT = process.env.PORT || 5000;
 
     // Middleware
-    app.use(cors({
-      origin: ['https://chow-front.vercel.app', 'http://localhost:3000', 'http://localhost:5173'],
-      credentials: true
-    }));
+    app.use(cors({ origin: CORS_ORIGINS, credentials: true }));
     app.use(express.json());
 
     // Routes
-    const categoryRoutes = require('./routes/categoryRoutes');
-    const subcategoryRoutes = require('./routes/subcategoryRoutes');
-    const itemRoutes = require('./routes/itemRoutes');
-    const dashboardRoutes = require('./routes/dashboardRoutes');
-    const searchRoutes = require('./routes/searchRoutes');
-    const ticketRoutes = require('./routes/tickets');
-    const authRoutes = require('./routes/authRoutes');
-    const orderRoutes = require('./routes/orderRoutes');
-    const userRoutes = require('./routes/userRoutes');
-    const adminRoutes = require('./routes/adminRoutes');
-    const distanceRoutes = require('./routes/distanceRoutes');
-    const paymentRoutes = require('./routes/paymentRoutes');
-
-    app.use('/api/categories', categoryRoutes);
-    app.use('/api/subcategories', subcategoryRoutes);
-    app.use('/api/items', itemRoutes);
-    app.use('/api/dashboard', dashboardRoutes);
-    app.use('/api/search', searchRoutes);
-    app.use('/api/tickets', ticketRoutes);
-    app.use('/api/auth', authRoutes);
-    app.use('/api/orders', orderRoutes);
-    app.use('/api/users', userRoutes);
-    app.use('/api/admin', adminRoutes);
-    app.use('/api', distanceRoutes);
-    app.use('/api/payment', paymentRoutes);
+    routes.forEach(({ path, module }) => {
+      app.use(path, require(module));
+    });
 
     // Basic route
     app.get('/', (req, res) => {
