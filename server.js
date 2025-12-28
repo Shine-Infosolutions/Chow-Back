@@ -1,58 +1,67 @@
-const express = require('express');
-const cors = require('cors');
-const connectDB = require('./config/db');
-require('dotenv').config();
+const express = require("express");
+const cors = require("cors");
+require("dotenv").config();
 
+const connectDB = require("./config/db");
+
+const app = express();
+
+/* -------------------- CORS -------------------- */
 const CORS_ORIGINS = [
-  'https://chow-front.vercel.app', 
-  'http://localhost:3000', 
-  'http://localhost:5173'
+  "https://chow-front.vercel.app",
+  "http://localhost:3000",
+  "http://localhost:5173",
 ];
 
-const routes = [
-  { path: '/api/categories', module: './routes/categoryRoutes' },
-  { path: '/api/subcategories', module: './routes/subcategoryRoutes' },
-  { path: '/api/items', module: './routes/itemRoutes' },
-  { path: '/api/dashboard', module: './routes/dashboardRoutes' },
-  { path: '/api/search', module: './routes/searchRoutes' },
-  { path: '/api/tickets', module: './routes/tickets' },
-  { path: '/api/auth', module: './routes/authRoutes' },
-  { path: '/api/orders', module: './routes/orderRoutes' },
-  { path: '/api/users', module: './routes/userRoutes' },
-  { path: '/api/admin', module: './routes/adminRoutes' },
-  { path: '/api', module: './routes/distanceRoutes' },
-  { path: '/api/payment', module: './routes/paymentRoutes' },
-  { path: '/api/sweet-deals', module: './routes/sweetDealRoutes' }
-];
+app.use(
+  cors({
+    origin: CORS_ORIGINS,
+    credentials: true,
+  })
+);
 
-const startServer = async () => {
-  try {
-    await connectDB();
-    
-    const app = express();
-    const PORT = process.env.PORT || 5000;
+app.use(express.json());
 
-    // Middleware
-    app.use(cors({ origin: CORS_ORIGINS, credentials: true }));
-    app.use(express.json());
+/* -------------------- FAVICON -------------------- */
+app.get("/favicon.ico", (req, res) => res.status(204).end());
 
-    // Routes
-    routes.forEach(({ path, module }) => {
-      app.use(path, require(module));
-    });
+/* -------------------- DB CONNECT (ONCE) -------------------- */
+connectDB().catch((err) => {
+  console.error("❌ Initial DB connection failed:", err.message);
+  process.exit(1); // fail fast in local dev
+});
 
-    // Basic route
-    app.get('/', (req, res) => {
-      res.json({ message: 'Chowdhry Backend API' });
-    });
+/* -------------------- ROUTES -------------------- */
+app.use("/api/categories", require("./routes/categoryRoutes"));
+app.use("/api/subcategories", require("./routes/subcategoryRoutes"));
+app.use("/api/items", require("./routes/itemRoutes"));
+app.use("/api/dashboard", require("./routes/dashboardRoutes"));
+app.use("/api/search", require("./routes/searchRoutes"));
+app.use("/api/tickets", require("./routes/tickets"));
+app.use("/api/auth", require("./routes/authRoutes"));
+app.use("/api/orders", require("./routes/orderRoutes"));
+app.use("/api/users", require("./routes/userRoutes"));
+app.use("/api/admin", require("./routes/adminRoutes"));
+app.use("/api", require("./routes/distanceRoutes"));
+app.use("/api/payment", require("./routes/paymentRoutes"));
+app.use("/api/sweet-deals", require("./routes/sweetDealRoutes"));
 
-    app.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
-    });
-  } catch (error) {
-    console.error('Failed to start server:', error);
-    process.exit(1);
-  }
-};
+/* -------------------- HEALTH CHECK -------------------- */
+app.get("/", (req, res) => {
+  res.status(200).json({ message: "Chowdhry Backend API running" });
+});
 
-startServer();
+/* -------------------- ERROR HANDLER -------------------- */
+app.use((err, req, res, next) => {
+  console.error("Unhandled error:", err);
+  res.status(500).json({
+    error: err.message || "Internal Server Error",
+  });
+});
+
+/* -------------------- START SERVER -------------------- */
+const PORT = process.env.PORT || 5000;
+
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+});
