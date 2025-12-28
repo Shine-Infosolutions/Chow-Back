@@ -1,35 +1,31 @@
 const express = require("express");
 const cors = require("cors");
 require("dotenv").config();
-
 const connectDB = require("./config/db");
 
 const app = express();
 
 /* -------------------- CORS -------------------- */
-const CORS_ORIGINS = [
-  "https://chow-front.vercel.app",
-  "http://localhost:3000",
-  "http://localhost:5173",
-];
-
 app.use(
   cors({
-    origin: CORS_ORIGINS,
+    origin: [
+      "https://chow-front.vercel.app",
+      "http://localhost:3000",
+      "http://localhost:5173",
+    ],
     credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
 
+// Preflight
+app.options("*", cors());
+
 app.use(express.json());
 
-/* -------------------- FAVICON -------------------- */
+// Ignore favicon
 app.get("/favicon.ico", (req, res) => res.status(204).end());
-
-/* -------------------- DB CONNECT (ONCE) -------------------- */
-connectDB().catch((err) => {
-  console.error("❌ Initial DB connection failed:", err.message);
-  process.exit(1); // fail fast in local dev
-});
 
 /* -------------------- ROUTES -------------------- */
 app.use("/api/categories", require("./routes/categoryRoutes"));
@@ -46,22 +42,27 @@ app.use("/api", require("./routes/distanceRoutes"));
 app.use("/api/payment", require("./routes/paymentRoutes"));
 app.use("/api/sweet-deals", require("./routes/sweetDealRoutes"));
 
-/* -------------------- HEALTH CHECK -------------------- */
+/* -------------------- HEALTH -------------------- */
 app.get("/", (req, res) => {
-  res.status(200).json({ message: "Chowdhry Backend API running" });
+  res.json({ message: "Chowdhry Backend API running" });
 });
 
 /* -------------------- ERROR HANDLER -------------------- */
 app.use((err, req, res, next) => {
   console.error("Unhandled error:", err);
-  res.status(500).json({
-    error: err.message || "Internal Server Error",
-  });
+  res.status(500).json({ error: err.message });
 });
 
 /* -------------------- START SERVER -------------------- */
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-});
+connectDB()
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log(`🚀 Server running on port ${PORT}`);
+    });
+  })
+  .catch((err) => {
+    console.error("❌ DB connection failed:", err);
+    process.exit(1);
+  });
