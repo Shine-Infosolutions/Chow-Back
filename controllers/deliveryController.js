@@ -1,4 +1,4 @@
-const DeliveryService = require('../services/delivery/DeliveryService');
+const { deliveryService } = require('../services');
 
 exports.checkDeliveryOptions = async (req, res) => {
   try {
@@ -13,7 +13,7 @@ exports.checkDeliveryOptions = async (req, res) => {
     }
 
     const totalWeight = parseInt(weight) || 500;
-    const deliveryInfo = await DeliveryService.getDeliveryInfo(pincode, totalWeight);
+    const deliveryInfo = await deliveryService.getDeliveryInfo(pincode, totalWeight);
     
     res.json(deliveryInfo);
   } catch (error) {

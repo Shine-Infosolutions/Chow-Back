@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const delhiveryController = require('../controllers/delhiveryController');
-const { verifyToken } = require('../middleware/auth');
+const { verifyToken } = require('../middleware');
 
 // Public routes
 router.post('/webhook', delhiveryController.delhiveryWebhook);

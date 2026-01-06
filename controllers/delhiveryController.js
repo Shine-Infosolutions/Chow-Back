@@ -1,5 +1,5 @@
 const Order = require('../models/Order');
-const delhiveryService = require('../services/delhiveryService');
+const { delhiveryService } = require('../services');
 
 /**
  * Handle Delhivery webhook for shipment status updates
@@ -346,7 +346,7 @@ exports.trackShipment = async (req, res) => {
  */
 exports.retryFailedShipments = async (req, res) => {
   try {
-    const { retryFailedShipments } = require('../utils/shipmentRetry');
+    const { retryFailedShipments } = require('../utils');
     const result = await retryFailedShipments();
     
     res.json({
@@ -365,7 +365,7 @@ exports.retryFailedShipments = async (req, res) => {
  */
 exports.getProblematicOrders = async (req, res) => {
   try {
-    const { getOrdersNeedingIntervention } = require('../utils/shipmentRetry');
+    const { getOrdersNeedingIntervention } = require('../utils');
     const orders = await getOrdersNeedingIntervention();
     
     res.json({

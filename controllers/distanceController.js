@@ -1,4 +1,4 @@
-const DistanceService = require('../services/delivery/DistanceService');
+const { distanceService } = require('../services');
 
 const calculateDistance = async (req, res) => {
   try {
@@ -8,7 +8,7 @@ const calculateDistance = async (req, res) => {
       return res.status(400).json({ message: 'Invalid pincode' });
     }
 
-    const distance = await DistanceService.calculateDistance(
+    const distance = await distanceService.calculateDistance(
       process.env.BASE_PINCODE || '273001',
       pincode
     );

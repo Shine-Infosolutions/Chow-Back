@@ -2,44 +2,30 @@ const Order = require('../models/Order');
 
 const TAX_RATE = 0.05;
 
-const SUCCESS_ORDER_QUERY = {
-  status: { $in: ['confirmed', 'shipped', 'delivered'] },
-  paymentStatus: 'paid'
-};
-
-const FAILED_ORDER_QUERY = {
-  $or: [
-    { status: 'failed' },
-    { status: 'cancelled' },
-    { status: 'pending' },
-    { paymentStatus: 'failed' }
-  ]
+const QUERIES = {
+  SUCCESS: {
+    status: { $in: ['confirmed', 'shipped', 'delivered'] },
+    paymentStatus: 'paid'
+  },
+  FAILED: {
+    $or: [
+      { status: 'failed' },
+      { status: 'cancelled' },
+      { status: 'pending' },
+      { paymentStatus: 'failed' }
+    ]
+  }
 };
 
 const formatAddress = (address) => {
   if (!address) return 'Address not available';
-
-  const {
-    firstName = '',
-    lastName = '',
-    street = '',
-    city = '',
-    state = '',
-    postcode = ''
-  } = address;
-
+  const { firstName = '', lastName = '', street = '', city = '', state = '', postcode = '' } = address;
   return `${firstName} ${lastName}, ${street}, ${city}, ${state} - ${postcode}`.trim();
 };
 
 const calculateOrderTotals = (items = [], deliveryFee = 0) => {
-  const subtotal = items.reduce((sum, i) => {
-    // Use the price from the item directly, not from itemId
-    const itemPrice = i.price || 0;
-    const itemQuantity = i.quantity || 0;
-    return sum + (itemPrice * itemQuantity);
-  }, 0);
+  const subtotal = items.reduce((sum, item) => sum + (item.price || 0) * (item.quantity || 0), 0);
   const tax = +(subtotal * TAX_RATE).toFixed(2);
-
   return {
     subtotal: +subtotal.toFixed(2),
     tax,
@@ -49,18 +35,13 @@ const calculateOrderTotals = (items = [], deliveryFee = 0) => {
 
 const getDeliveryAddress = (order) => {
   if (!order.userId?.address || !order.addressId) return null;
-  return order.userId.address.find(
-    (a) => String(a._id) === String(order.addressId)
-  ) || null;
+  return order.userId.address.find(a => String(a._id) === String(order.addressId)) || null;
 };
 
 const formatOrderData = (order) => {
   const o = order.toObject();
   const deliveryAddress = getDeliveryAddress(o);
-  const { subtotal, tax, deliveryCharge } = calculateOrderTotals(
-    o.items,
-    o.shipping?.total || 0
-  );
+  const { subtotal, tax, deliveryCharge } = calculateOrderTotals(o.items, o.shipping?.total || 0);
   const latestPayment = o.razorpayData?.at(-1) || {};
 
   return {
@@ -72,10 +53,7 @@ const formatOrderData = (order) => {
     deliveryAddress: formatAddress(deliveryAddress),
     items: o.items,
     itemsString: o.items
-      .map(
-        (i) =>
-          `${i.itemId?.name || 'Unknown'} (Qty: ${i.quantity}, ₹${i.price})`
-      )
+      .map(i => `${i.itemId?.name || 'Unknown'} (Qty: ${i.quantity}, ₹${i.price})`)
       .join(', '),
     subtotal,
     tax,
@@ -107,11 +85,14 @@ const formatOrderData = (order) => {
 
 const getOrdersWithPagination = async (query, page, limit) => {
   const skip = (page - 1) * limit;
+  const populateOptions = [
+    { path: 'userId', select: 'name email phone address' },
+    { path: 'items.itemId', select: 'name price category subcategory' }
+  ];
 
   const [orders, total] = await Promise.all([
     Order.find(query)
-      .populate('userId', 'name email phone address')
-      .populate('items.itemId', 'name price category subcategory')
+      .populate(populateOptions)
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit),
@@ -129,17 +110,37 @@ const getOrdersWithPagination = async (query, page, limit) => {
   };
 };
 
+const handleOrderUpdate = async (req, res, updateField) => {
+  try {
+    const updateValue = req.body[updateField];
+    if (!updateValue) {
+      return res.status(400).json({ 
+        success: false, 
+        message: `${updateField.charAt(0).toUpperCase() + updateField.slice(1)} required` 
+      });
+    }
+
+    const order = await Order.findByIdAndUpdate(
+      req.params.id,
+      { [updateField]: updateValue },
+      { new: true, runValidators: true }
+    );
+
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+
+    res.json({ success: true, order });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+};
+
 exports.getFailedOrders = async (req, res) => {
   try {
     const page = +req.query.page || 1;
     const limit = +req.query.limit || 10;
-
-    const result = await getOrdersWithPagination(
-      FAILED_ORDER_QUERY,
-      page,
-      limit
-    );
-
+    const result = await getOrdersWithPagination(QUERIES.FAILED, page, limit);
     res.json({ success: true, ...result });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -150,13 +151,7 @@ exports.getAllOrders = async (req, res) => {
   try {
     const page = +req.query.page || 1;
     const limit = +req.query.limit || 10;
-
-    const result = await getOrdersWithPagination(
-      SUCCESS_ORDER_QUERY,
-      page,
-      limit
-    );
-
+    const result = await getOrdersWithPagination(QUERIES.SUCCESS, page, limit);
     res.json({ success: true, ...result });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -170,10 +165,7 @@ exports.getOrderById = async (req, res) => {
       .populate('items.itemId', 'name price category subcategory');
 
     if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: 'Order not found'
-      });
+      return res.status(404).json({ success: false, message: 'Order not found' });
     }
 
     const o = order.toObject();
@@ -185,10 +177,7 @@ exports.getOrderById = async (req, res) => {
       order: {
         ...o,
         deliveryAddress,
-        orderSummary: {
-          ...summary,
-          totalAmount: o.totalAmount
-        },
+        orderSummary: { ...summary, totalAmount: o.totalAmount },
         paymentDetails: {
           paymentStatus: o.paymentStatus,
           razorpayTransactions: o.razorpayData || []
@@ -200,55 +189,14 @@ exports.getOrderById = async (req, res) => {
   }
 };
 
-exports.updateOrderStatus = async (req, res) => {
-  try {
-    const { status } = req.body;
-    if (!status)
-      return res.status(400).json({ success: false, message: 'Status required' });
-
-    const order = await Order.findByIdAndUpdate(
-      req.params.id,
-      { status },
-      { new: true, runValidators: true }
-    );
-
-    if (!order)
-      return res.status(404).json({ success: false, message: 'Order not found' });
-
-    res.json({ success: true, order });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-};
-
-exports.updatePaymentStatus = async (req, res) => {
-  try {
-    const { paymentStatus } = req.body;
-    if (!paymentStatus)
-      return res
-        .status(400)
-        .json({ success: false, message: 'Payment status required' });
-
-    const order = await Order.findByIdAndUpdate(
-      req.params.id,
-      { paymentStatus },
-      { new: true, runValidators: true }
-    );
-
-    if (!order)
-      return res.status(404).json({ success: false, message: 'Order not found' });
-
-    res.json({ success: true, order });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-};
+exports.updateOrderStatus = (req, res) => handleOrderUpdate(req, res, 'status');
+exports.updatePaymentStatus = (req, res) => handleOrderUpdate(req, res, 'paymentStatus');
 
 exports.getMyOrders = async (req, res) => {
   try {
     const orders = await Order.find({
       userId: req.params.userId,
-      ...SUCCESS_ORDER_QUERY
+      ...QUERIES.SUCCESS
     })
       .populate('userId', 'name email phone address')
       .populate('items.itemId', 'name price')
@@ -256,7 +204,7 @@ exports.getMyOrders = async (req, res) => {
 
     res.json({
       success: true,
-      orders: orders.map((o) => ({
+      orders: orders.map(o => ({
         ...o.toObject(),
         deliveryAddress: getDeliveryAddress(o.toObject())
       }))

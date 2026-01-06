@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { verifyToken, verifyAdmin } = require('../middleware/auth');
+const { verifyToken, verifyAdmin } = require('../middleware');
 
 // Admin Dashboard Route
 router.get('/dashboard', verifyToken, verifyAdmin, (req, res) => {

@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const itemController = require('../controllers/itemController');
-const { upload } = require('../middleware/upload');
+const { upload } = require('../middleware');
 
 router.get('/all', itemController.getItems);
 router.get('/get/:id', itemController.getItemById);

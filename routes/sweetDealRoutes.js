@@ -7,7 +7,7 @@ const {
   deleteDeal,
   getAllDeals
 } = require('../controllers/sweetDealController');
-const { upload } = require('../middleware/upload');
+const { upload } = require('../middleware');
 
 // Public routes
 router.get('/active', getActiveDeal);

@@ -1,5 +1,5 @@
 const SweetDeal = require('../models/SweetDeal');
-const { uploadToCloudinary } = require('../middleware/upload');
+const { uploadToCloudinary } = require('../middleware');
 
 // Get active sweet deal
 const getActiveDeal = async (req, res) => {

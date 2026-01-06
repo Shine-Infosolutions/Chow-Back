@@ -1,10 +1,9 @@
+const crypto = require('crypto');
 const Order = require('../models/Order');
 const Item = require('../models/Item');
-const verifySignature = require('../utils/verifyRazorpaySignature');
-const razorpay = require('../config/razorpay');
-const delhiveryService = require('../services/delhiveryService');
-const deliveryService = require('../services/delivery/DeliveryService');
-const { processPaymentConfirmation, createDelhiveryShipment } = require('../utils/paymentHelper');
+const { verifyRazorpaySignature, processPaymentConfirmation, createDelhiveryShipment } = require('../utils');
+const { razorpay } = require('../config');
+const { delhiveryService, deliveryService } = require('../services');
 const { isGorakhpurPincode, getLocalDeliveryCharge } = require('../config/gorakhpurPincodes');
 
 const updateStock = async (items = []) => {
@@ -152,7 +151,7 @@ exports.verifyPayment = async (req, res) => {
       return res.json({ success: true, orderId: order._id });
     }
 
-    const valid = verifySignature(
+    const valid = verifyRazorpaySignature(
       razorpay_order_id,
       razorpay_payment_id,
       razorpay_signature
@@ -231,7 +230,6 @@ exports.handlePaymentFailure = async (req, res) => {
 /* -------------------- RAZORPAY WEBHOOK (FINAL AUTHORITY) -------------------- */
 exports.razorpayWebhook = async (req, res) => {
   try {
-    const crypto = require('crypto');
     const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
     
     if (!secret) {
