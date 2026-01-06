@@ -42,14 +42,16 @@ cloudinary.config({
 
 // Razorpay Configuration
 const { RAZORPAY_KEY_ID, RAZORPAY_SECRET } = process.env;
-if (!RAZORPAY_KEY_ID || !RAZORPAY_SECRET) {
-  throw new Error("Razorpay credentials missing");
-}
+let razorpayInstance = null;
 
-const razorpayInstance = new Razorpay({
-  key_id: RAZORPAY_KEY_ID,
-  key_secret: RAZORPAY_SECRET,
-});
+if (RAZORPAY_KEY_ID && RAZORPAY_SECRET) {
+  razorpayInstance = new Razorpay({
+    key_id: RAZORPAY_KEY_ID,
+    key_secret: RAZORPAY_SECRET,
+  });
+} else {
+  console.warn("Razorpay credentials missing - payment features will be disabled");
+}
 
 module.exports = {
   connectDB,

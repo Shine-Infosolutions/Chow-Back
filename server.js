@@ -65,12 +65,11 @@ app.use("*", (req, res) => {
 
 // Global error handler
 app.use((err, req, res, next) => {
-  console.error("Unhandled error:", err);
+  console.error("Unhandled error:", err.message);
   const isDev = process.env.NODE_ENV !== 'production';
   res.status(err.status || 500).json({ 
     success: false,
-    error: isDev ? err.message : 'Internal server error',
-    ...(isDev && { stack: err.stack })
+    error: isDev ? err.message : 'Internal server error'
   });
 });
 
@@ -83,6 +82,22 @@ process.on('SIGTERM', () => {
 process.on('SIGINT', () => {
   console.log('SIGINT received, shutting down gracefully');
   process.exit(0);
+});
+
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason?.message || reason);
+  // Don't exit in production, just log
+  if (process.env.NODE_ENV !== 'production') {
+    process.exit(1);
+  }
+});
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error?.message || error);
+  // Exit gracefully
+  process.exit(1);
 });
 
 // Start server

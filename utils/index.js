@@ -52,30 +52,18 @@ const processPaymentConfirmation = async (order, paymentData) => {
     await order.save();
 
     const shouldCreateShipment = deliveryService.shouldCreateDelhiveryShipment(order);
-    console.log(`=== PAYMENT CONFIRMATION DEBUG ===`);
-    console.log(`Order ID: ${order._id}`);
-    console.log(`Delivery Provider: ${order.deliveryProvider}`);
-    console.log(`Payment Status: ${order.paymentStatus}`);
-    console.log(`Order Status: ${order.status}`);
-    console.log(`Should create shipment: ${shouldCreateShipment}`);
     console.log(`Payment confirmed for ${shouldCreateShipment ? 'Delhivery' : 'local delivery'} order:`, order._id);
 
     // Only create shipment for Delhivery orders
     if (shouldCreateShipment) {
       try {
-        console.log('Initiating shipment creation...');
-        const shipmentResult = await createDelhiveryShipment(order._id);
-        console.log('Shipment creation result:', shipmentResult);
+        await createDelhiveryShipment(order._id);
         console.log('Shipment creation initiated for order:', order._id);
       } catch (shipmentError) {
-        console.error('=== SHIPMENT CREATION ERROR IN PAYMENT CONFIRMATION ===');
         console.error('Shipment creation failed:', shipmentError.message);
-        console.error('Error stack:', shipmentError.stack);
-        console.error('=== SHIPMENT ERROR END ===');
         // Don't fail the payment confirmation if shipment creation fails
       }
     }
-    console.log(`=== PAYMENT CONFIRMATION DEBUG END ===`);
 
     return { success: true, orderId: order._id };
   } catch (error) {
@@ -87,67 +75,41 @@ const processPaymentConfirmation = async (order, paymentData) => {
 // ==================== SHIPMENT UTILITIES ====================
 
 const createDelhiveryShipment = async (orderId) => {
-  console.log('=== UTILS CREATE DELHIVERY SHIPMENT DEBUG ===');
-  console.log('Input orderId:', orderId);
-  
   try {
     const Order = require('../models/Order');
     
-    console.log('Fetching order from database...');
     const order = await Order.findById(orderId)
       .populate('userId', 'name email phone address')
       .populate('items.itemId', 'name weight');
 
-    console.log('Order found:', !!order);
     if (!order) {
-      console.log('ERROR: Order not found for ID:', orderId);
       throw new Error('Order not found');
     }
-    
-    console.log('Order details:');
-    console.log('- Order ID:', order._id);
-    console.log('- Payment Status:', order.paymentStatus);
-    console.log('- Current Status:', order.status);
-    console.log('- Delivery Provider:', order.deliveryProvider);
-    console.log('- Existing Waybill:', order.waybill);
     
     if (order.waybill) {
       console.log('Order already has waybill:', order.waybill);
       return;
     }
     
-    console.log('Checking if should create Delhivery shipment...');
     const shouldCreate = deliveryService.shouldCreateDelhiveryShipment(order);
-    console.log('Should create shipment:', shouldCreate);
     
     if (!shouldCreate) {
       console.log(`BLOCKED: Shipment creation attempted for order: ${orderId} (Provider: ${order.deliveryProvider})`);
       return;
     }
 
-    console.log('User data:', !!order.userId);
-    console.log('User address data:', !!order.userId?.address);
-    
     if (!order.userId || !order.userId.address) {
-      console.log('ERROR: User or address data not found');
       throw new Error('User or address data not found');
     }
-
-    console.log('Looking for delivery address...');
-    console.log('Address ID to find:', order.addressId);
-    console.log('Available addresses:', order.userId.address.map(a => ({ id: a._id, city: a.city })));
     
     const deliveryAddress = order.userId.address.find(
       addr => String(addr._id) === String(order.addressId)
     );
 
-    console.log('Delivery address found:', !!deliveryAddress);
     if (!deliveryAddress) {
-      console.log('ERROR: Delivery address not found');
       throw new Error('Delivery address not found');
     }
 
-    console.log('Building shipment data...');
     const shipmentData = {
       orderId: order._id,
       customerName: `${deliveryAddress.firstName || ''} ${deliveryAddress.lastName || ''}`.trim(),
@@ -164,34 +126,18 @@ const createDelhiveryShipment = async (orderId) => {
         `${item.itemId?.name || 'Unknown Item'} x ${item.quantity}`
       ).join(', ')
     };
-
-    console.log('Shipment data prepared:');
-    console.log(JSON.stringify(shipmentData, null, 2));
-
-    console.log('Checking delhiveryService availability...');
-    console.log('delhiveryService exists:', !!delhiveryService);
-    console.log('createShipment function exists:', typeof delhiveryService?.createShipment);
     
     if (!delhiveryService || typeof delhiveryService.createShipment !== 'function') {
-      console.log('ERROR: Delhivery service not available');
       throw new Error('Delhivery service not available');
     }
 
-    console.log('Calling delhiveryService.createShipment...');
     const result = await delhiveryService.createShipment(shipmentData);
     
-    console.log('Delhivery service result:');
-    console.log('Result exists:', !!result);
-    console.log('Result type:', typeof result);
-    console.log('Result content:', JSON.stringify(result, null, 2));
-    
     if (!result) {
-      console.log('ERROR: Delhivery service returned no result');
       throw new Error('Delhivery service returned no result');
     }
     
     if (result && result.success) {
-      console.log('SUCCESS: Updating order with shipment details...');
       Object.assign(order, {
         waybill: result.waybill,
         deliveryStatus: result.status,
@@ -200,18 +146,12 @@ const createDelhiveryShipment = async (orderId) => {
         shipmentLastError: null
       });
       await order.save();
-      console.log('Order updated successfully');
-      console.log('=== UTILS CREATE SHIPMENT SUCCESS ===');
       return result;
     } else {
-      console.log('ERROR: Shipment creation failed');
-      console.log('Result error:', result?.error);
       throw new Error(result?.error || 'Shipment creation failed - no result');
     }
   } catch (error) {
-    console.error('=== UTILS SHIPMENT CREATION ERROR ===');
     console.error(`Shipment creation failed for order ${orderId}:`, error.message);
-    console.error('Error stack:', error.stack);
     
     // Update order with error info
     try {
@@ -221,13 +161,11 @@ const createDelhiveryShipment = async (orderId) => {
         order.shipmentAttempts = (order.shipmentAttempts || 0) + 1;
         order.shipmentLastError = error.message;
         await order.save();
-        console.log('Updated order with error info');
       }
     } catch (saveError) {
       console.error('Failed to save shipment error:', saveError.message);
     }
     
-    console.error('=== UTILS SHIPMENT ERROR END ===');
     throw error;
   }
 };

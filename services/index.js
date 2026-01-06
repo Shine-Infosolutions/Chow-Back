@@ -154,36 +154,20 @@ class DelhiveryService {
   }
 
   async createShipment(orderData) {
-    console.log('=== DELHIVERY SERVICE CREATE SHIPMENT DEBUG ===');
-    console.log('Input orderData:', JSON.stringify(orderData, null, 2));
-    
     try {
       if (!orderData?.orderId) {
-        console.log('ERROR: Missing orderId in orderData');
         return { success: false, error: 'Order data with orderId is required' };
       }
       
-      console.log('Checking if pincode is Gorakhpur:', orderData.pincode);
       if (isGorakhpurPincode(orderData.pincode)) {
-        console.log('ERROR: Gorakhpur pincode detected, should use self-delivery');
         return { success: false, error: 'Gorakhpur orders use self-delivery' };
       }
       
-      console.log('useRealAPI setting:', this.useRealAPI);
       if (!this.useRealAPI) {
-        console.log('Using mock shipment creation');
-        const mockResult = this._mockCreateShipment(orderData);
-        console.log('Mock result:', JSON.stringify(mockResult, null, 2));
-        return mockResult;
+        return this._mockCreateShipment(orderData);
       }
 
-      console.log('Building shipment payload...');
       const shipmentData = this._buildShipmentPayload(orderData);
-      console.log('Built shipment payload:', JSON.stringify(shipmentData, null, 2));
-      
-      console.log('Making API call to Delhivery...');
-      console.log('API URL:', `${this.baseURL}/cmu/create.json`);
-      console.log('API Token:', this.token ? 'Present' : 'Missing');
       
       const response = await this.axiosInstance.post('/cmu/create.json', 
         `format=json&data=${JSON.stringify(shipmentData)}`,
@@ -193,34 +177,20 @@ class DelhiveryService {
         }
       );
 
-      console.log('Delhivery API response status:', response.status);
-      console.log('Delhivery API response data:', JSON.stringify(response.data, null, 2));
-
       const packageData = response.data.packages?.[0];
-      console.log('Package data:', JSON.stringify(packageData, null, 2));
       
       if (!packageData?.waybill) {
-        console.log('ERROR: No waybill in response');
         return { success: false, error: 'No waybill received from Delhivery API' };
       }
 
-      const result = {
+      return {
         success: true,
         waybill: packageData.waybill,
         status: 'SHIPMENT_CREATED',
         estimatedDelivery: packageData.expected_delivery_date
       };
-      
-      console.log('SUCCESS: Returning result:', JSON.stringify(result, null, 2));
-      console.log('=== DELHIVERY SERVICE DEBUG END ===');
-      return result;
     } catch (error) {
-      console.error('=== DELHIVERY SERVICE ERROR ===');
-      console.error('Error message:', error.message);
-      console.error('Error response data:', error.response?.data);
-      console.error('Error response status:', error.response?.status);
-      console.error('Error stack:', error.stack);
-      console.error('=== DELHIVERY SERVICE ERROR END ===');
+      console.error('Delhivery shipment creation error:', error.message);
       return { success: false, error: `Shipment creation failed: ${error.message}` };
     }
   }
@@ -263,28 +233,16 @@ class DelhiveryService {
   }
 
   _buildShipmentPayload(orderData) {
-    console.log('=== BUILD SHIPMENT PAYLOAD DEBUG ===');
-    console.log('Input orderData:', JSON.stringify(orderData, null, 2));
-    
     try {
       const requiredFields = ['customerName', 'address', 'pincode', 'city', 'state', 'phone', 'orderId'];
-      console.log('Checking required fields...');
       
       for (const field of requiredFields) {
-        const value = orderData[field];
-        console.log(`- ${field}: ${value} (type: ${typeof value})`);
-        if (!value) {
-          console.log(`ERROR: Missing required field: ${field}`);
+        if (!orderData[field]) {
           throw new Error(`Missing required field: ${field}`);
         }
       }
       
       const env = process.env;
-      console.log('Environment variables:');
-      console.log('- RETURN_PINCODE:', env.RETURN_PINCODE || 'Not set');
-      console.log('- RETURN_CITY:', env.RETURN_CITY || 'Not set');
-      console.log('- RETURN_PHONE:', env.RETURN_PHONE || 'Not set');
-      console.log('- SELLER_NAME:', env.SELLER_NAME || 'Not set');
       
       const payload = {
         shipments: [{
@@ -322,14 +280,8 @@ class DelhiveryService {
         }]
       };
       
-      console.log('Built payload:', JSON.stringify(payload, null, 2));
-      console.log('=== BUILD SHIPMENT PAYLOAD DEBUG END ===');
       return payload;
     } catch (error) {
-      console.error('=== BUILD PAYLOAD ERROR ===');
-      console.error('Error message:', error.message);
-      console.error('Error stack:', error.stack);
-      console.error('=== BUILD PAYLOAD ERROR END ===');
       throw new Error(`Failed to build shipment payload: ${error.message}`);
     }
   }

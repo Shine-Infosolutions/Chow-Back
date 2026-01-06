@@ -187,40 +187,22 @@ exports.calculateRate = async (req, res) => {
  * Called automatically after payment confirmation or manually by admin
  */
 exports.createShipment = async (req, res) => {
-  console.log('=== CREATE SHIPMENT DEBUG START ===');
-  console.log('Request body:', JSON.stringify(req.body, null, 2));
-  
   try {
     const { orderId } = req.body;
-    console.log('Extracted orderId:', orderId);
     
     if (!orderId) {
-      console.log('ERROR: No orderId provided');
       return res.status(400).json({ success: false, message: 'Order ID required' });
     }
     
-    console.log('Fetching order from database...');
     const order = await Order.findById(orderId)
       .populate('userId', 'name email phone address')
       .populate('items.itemId', 'name weight');
 
-    console.log('Order found:', !!order);
     if (!order) {
-      console.log('ERROR: Order not found for ID:', orderId);
       return res.status(404).json({ success: false, message: 'Order not found' });
     }
 
-    console.log('Order details:');
-    console.log('- Order ID:', order._id);
-    console.log('- Payment Status:', order.paymentStatus);
-    console.log('- Current Status:', order.status);
-    console.log('- Delivery Provider:', order.deliveryProvider);
-    console.log('- Existing Waybill:', order.waybill);
-    console.log('- User ID:', order.userId?._id);
-    console.log('- Address ID:', order.addressId);
-
     if (order.paymentStatus !== 'paid') {
-      console.log('ERROR: Order payment status is not paid:', order.paymentStatus);
       return res.status(400).json({ 
         success: false, 
         message: 'Cannot create shipment for unpaid order' 
@@ -228,38 +210,24 @@ exports.createShipment = async (req, res) => {
     }
 
     if (order.waybill) {
-      console.log('ERROR: Shipment already exists with waybill:', order.waybill);
       return res.status(400).json({ 
         success: false, 
         message: 'Shipment already created',
         waybill: order.waybill
       });
     }
-
-    console.log('User addresses:', order.userId?.address?.length || 0);
-    console.log('Looking for address ID:', order.addressId);
     
     // Get delivery address
     const deliveryAddress = order.userId?.address?.find(
       addr => String(addr._id) === String(order.addressId)
     );
 
-    console.log('Delivery address found:', !!deliveryAddress);
     if (!deliveryAddress) {
-      console.log('ERROR: Delivery address not found');
-      console.log('Available addresses:', order.userId?.address?.map(a => ({ id: a._id, city: a.city })));
       return res.status(400).json({ 
         success: false, 
         message: 'Delivery address not found' 
       });
     }
-
-    console.log('Delivery address details:');
-    console.log('- Name:', `${deliveryAddress.firstName} ${deliveryAddress.lastName}`);
-    console.log('- City:', deliveryAddress.city);
-    console.log('- State:', deliveryAddress.state);
-    console.log('- Pincode:', deliveryAddress.postcode);
-    console.log('- Street:', deliveryAddress.street);
 
     // Prepare shipment data
     const shipmentData = {
@@ -279,17 +247,9 @@ exports.createShipment = async (req, res) => {
       ).join(', ')
     };
 
-    console.log('Prepared shipment data:');
-    console.log(JSON.stringify(shipmentData, null, 2));
-
-    console.log('Calling delhiveryService.createShipment...');
     const result = await delhiveryService.createShipment(shipmentData);
     
-    console.log('Delhivery service result:');
-    console.log(JSON.stringify(result, null, 2));
-    
     if (result.success) {
-      console.log('Shipment creation successful, updating order...');
       order.waybill = result.waybill;
       order.deliveryStatus = result.status;
       order.status = 'shipped';
@@ -299,30 +259,19 @@ exports.createShipment = async (req, res) => {
       }
       await order.save();
       
-      console.log(`SUCCESS: Shipment created for order ${order._id}: ${result.waybill}`);
-    } else {
-      console.log('ERROR: Shipment creation failed:', result.error);
+      console.log(`Shipment created for order ${order._id}: ${result.waybill}`);
     }
 
-    const response = {
+    res.json({
       success: result.success,
       waybill: result.waybill,
       status: result.status,
       estimatedDelivery: result.estimatedDelivery,
       error: result.error
-    };
-    
-    console.log('Sending response:');
-    console.log(JSON.stringify(response, null, 2));
-    console.log('=== CREATE SHIPMENT DEBUG END ===');
-    
-    res.json(response);
+    });
   } catch (error) {
-    console.error('=== SHIPMENT CREATION ERROR ===');
-    console.error('Error message:', error.message);
-    console.error('Error stack:', error.stack);
-    console.error('=== ERROR END ===');
-    res.status(500).json({ success: false, error: 'Shipment creation failed', details: error.message });
+    console.error('Shipment creation error:', error.message);
+    res.status(500).json({ success: false, error: 'Shipment creation failed' });
   }
 };
 
