@@ -1,8 +1,17 @@
 const User = require('../models/User');
 const jwt = require('jsonwebtoken');
 
-const generateToken = (id, role) => {
-  return jwt.sign({ id, role }, process.env.JWT_SECRET, { expiresIn: '7d' });
+const generateToken = (id, role) => 
+  jwt.sign({ id, role }, process.env.JWT_SECRET, { expiresIn: '7d' });
+
+const sanitizeUser = (user) => {
+  const { password, ...userData } = user.toObject();
+  return userData;
+};
+
+const validateRequiredFields = (fields, data) => {
+  const missing = fields.filter(field => !data[field]);
+  return missing.length ? `${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} required` : null;
 };
 
 // User Registration
@@ -10,8 +19,9 @@ exports.userRegister = async (req, res) => {
   try {
     const { name, email, password, phone, address } = req.body;
     
-    if (!name || !email || !password || !phone) {
-      return res.status(400).json({ success: false, message: 'Name, email, password, and phone are required' });
+    const validationError = validateRequiredFields(['name', 'email', 'password', 'phone'], req.body);
+    if (validationError) {
+      return res.status(400).json({ success: false, message: validationError });
     }
 
     const existingUser = await User.findOne({ email });
@@ -19,12 +29,14 @@ exports.userRegister = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Email already exists' });
     }
 
-    const user = new User({ name, email, password, phone, address });
-    await user.save();
-
+    const user = await new User({ name, email, password, phone, address }).save();
     const token = generateToken(user._id, user.role);
-    const { password: _, ...userData } = user.toObject();
-    res.status(201).json({ success: true, user: userData, token });
+    
+    res.status(201).json({ 
+      success: true, 
+      user: sanitizeUser(user), 
+      token 
+    });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -35,23 +47,40 @@ exports.userLogin = async (req, res) => {
   try {
     const { email, password } = req.body;
     
-    if (!email || !password) {
-      return res.status(400).json({ success: false, message: 'Email and password are required' });
+    const validationError = validateRequiredFields(['email', 'password'], req.body);
+    if (validationError) {
+      return res.status(400).json({ success: false, message: validationError });
     }
 
     const user = await User.findOne({ email, status: 'active' });
-    if (!user) {
-      return res.status(401).json({ success: false, message: 'Invalid credentials' });
-    }
-
-    const isMatch = await user.comparePassword(password);
-    if (!isMatch) {
+    if (!user || !(await user.comparePassword(password))) {
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
 
     const token = generateToken(user._id, user.role);
-    const { password: _, ...userData } = user.toObject();
-    res.json({ success: true, user: userData, token });
+    res.json({ success: true, user: sanitizeUser(user), token });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+// Admin Login
+exports.adminLogin = async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    
+    const validationError = validateRequiredFields(['email', 'password'], req.body);
+    if (validationError) {
+      return res.status(400).json({ success: false, message: validationError });
+    }
+
+    const user = await User.findOne({ email, role: 'admin', status: 'active' });
+    if (!user || !(await user.comparePassword(password))) {
+      return res.status(401).json({ success: false, message: 'Invalid admin credentials' });
+    }
+
+    const token = generateToken(user._id, user.role);
+    res.json({ success: true, user: sanitizeUser(user), token });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -90,51 +119,65 @@ exports.updateUserProfile = async (req, res) => {
   }
 };
 
-// Add Address
-exports.addAddress = async (req, res) => {
-  try {
-    const { addressType, firstName, lastName, street, city, state, postcode, email, phone } = req.body;
-    
-    if (!addressType || !firstName || !lastName || !street || !city || !state || !postcode || !email || !phone) {
-      return res.status(400).json({ success: false, message: 'All required fields must be provided' });
-    }
+// Address Management
+const findUserById = async (id) => {
+  const user = await User.findById(id);
+  if (!user) throw new Error('User not found');
+  return user;
+};
 
-    const user = await User.findById(req.params.id);
+const setDefaultAddress = (addresses, isDefault) => {
+  if (isDefault) {
+    addresses.forEach(addr => addr.isDefault = false);
+  }
+};
+
+exports.getAddresses = async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id).select('address');
     if (!user) {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
-
-    if (req.body.isDefault) {
-      user.address.forEach(addr => addr.isDefault = false);
-    }
-
-    user.address.push(req.body);
-    const savedUser = await user.save();
-    
-    res.status(201).json({ success: true, message: 'Address added successfully', address: savedUser.address });
+    res.json({ success: true, address: user.address });
   } catch (error) {
-    console.error('Add address error:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 };
 
-// Update Address
-exports.updateAddress = async (req, res) => {
+exports.addAddress = async (req, res) => {
   try {
-    const user = await User.findById(req.params.id);
-    if (!user) {
-      return res.status(404).json({ success: false, message: 'User not found' });
+    const requiredFields = ['addressType', 'firstName', 'lastName', 'street', 'city', 'state', 'postcode', 'email', 'phone'];
+    const validationError = validateRequiredFields(requiredFields, req.body);
+    if (validationError) {
+      return res.status(400).json({ success: false, message: validationError });
     }
 
+    const user = await findUserById(req.params.id);
+    setDefaultAddress(user.address, req.body.isDefault);
+    
+    user.address.push(req.body);
+    const savedUser = await user.save();
+    
+    res.status(201).json({ 
+      success: true, 
+      message: 'Address added successfully', 
+      address: savedUser.address 
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+exports.updateAddress = async (req, res) => {
+  try {
+    const user = await findUserById(req.params.id);
     const address = user.address.id(req.params.addressId);
+    
     if (!address) {
       return res.status(404).json({ success: false, message: 'Address not found' });
     }
 
-    if (req.body.isDefault) {
-      user.address.forEach(addr => addr.isDefault = false);
-    }
-
+    setDefaultAddress(user.address, req.body.isDefault);
     Object.assign(address, req.body);
     await user.save();
     
@@ -144,59 +187,19 @@ exports.updateAddress = async (req, res) => {
   }
 };
 
-// Delete Address
 exports.deleteAddress = async (req, res) => {
   try {
-    const user = await User.findById(req.params.id);
-    if (!user) {
-      return res.status(404).json({ success: false, message: 'User not found' });
+    const user = await findUserById(req.params.id);
+    const address = user.address.id(req.params.addressId);
+    
+    if (!address) {
+      return res.status(404).json({ success: false, message: 'Address not found' });
     }
 
-    user.address.id(req.params.addressId).remove();
+    address.deleteOne();
     await user.save();
     
     res.json({ success: true, address: user.address });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-};
-
-// Get All Addresses
-exports.getAddresses = async (req, res) => {
-  try {
-    const user = await User.findById(req.params.id).select('address');
-    if (!user) {
-      return res.status(404).json({ success: false, message: 'User not found' });
-    }
-    
-    res.json({ success: true, address: user.address });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-};
-
-// Admin Login
-exports.adminLogin = async (req, res) => {
-  try {
-    const { email, password } = req.body;
-    
-    if (!email || !password) {
-      return res.status(400).json({ success: false, message: 'Email and password are required' });
-    }
-
-    const user = await User.findOne({ email, role: 'admin', status: 'active' });
-    if (!user) {
-      return res.status(401).json({ success: false, message: 'Invalid admin credentials' });
-    }
-
-    const isMatch = await user.comparePassword(password);
-    if (!isMatch) {
-      return res.status(401).json({ success: false, message: 'Invalid admin credentials' });
-    }
-
-    const token = generateToken(user._id, user.role);
-    const { password: _, ...userData } = user.toObject();
-    res.json({ success: true, user: userData, token });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }

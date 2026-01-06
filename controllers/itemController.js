@@ -1,152 +1,152 @@
 const Item = require('../models/Item');
-const { uploadToCloudinary } = require('../middleware/upload');
+const { uploadToCloudinary } = require('../middleware');
+
+const POPULATE_OPTIONS = 'categories subcategories';
+const DEFAULT_PAGINATION = { page: 1, limit: 10 };
+
+const getPaginationParams = (query) => {
+  const page = parseInt(query.page) || DEFAULT_PAGINATION.page;
+  const limit = parseInt(query.limit) || DEFAULT_PAGINATION.limit;
+  const skip = (page - 1) * limit;
+  return { page, limit, skip };
+};
+
+const handleAsyncRoute = (fn) => async (req, res) => {
+  try {
+    await fn(req, res);
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const uploadFiles = async (files) => {
+  const result = {};
+  
+  if (files?.images) {
+    result.images = await Promise.all(
+      files.images.map(file => uploadToCloudinary(file.buffer, 'image'))
+    );
+  }
+  
+  if (files?.video?.[0]) {
+    result.video = await uploadToCloudinary(files.video[0].buffer, 'video');
+  }
+  
+  return result;
+};
 
 // Get all items
-exports.getItems = async (req, res) => {
-  try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
-    const skip = (page - 1) * limit;
+exports.getItems = handleAsyncRoute(async (req, res) => {
+  const { page, limit, skip } = getPaginationParams(req.query);
 
-    const items = await Item.find()
-      .populate('categories subcategories')
+  const [items, total] = await Promise.all([
+    Item.find()
+      .populate(POPULATE_OPTIONS)
       .skip(skip)
       .limit(limit)
-      .sort({ createdAt: -1 });
-    
-    const total = await Item.countDocuments();
-    
-    res.json({
-      items,
-      pagination: {
-        page,
-        limit,
-        total,
-        pages: Math.ceil(total / limit)
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-};
+      .sort({ createdAt: -1 }),
+    Item.countDocuments()
+  ]);
+  
+  res.json({
+    success: true,
+    items,
+    pagination: {
+      page,
+      limit,
+      total,
+      pages: Math.ceil(total / limit)
+    }
+  });
+});
 
 // Get item by ID
-exports.getItemById = async (req, res) => {
-  try {
-    const item = await Item.findById(req.params.id).populate('categories subcategories');
-    if (!item) return res.status(404).json({ message: 'Item not found' });
-    res.json(item);
-  } catch (error) {
-    res.status(500).json({ message: error.message });
+exports.getItemById = handleAsyncRoute(async (req, res) => {
+  const item = await Item.findById(req.params.id).populate(POPULATE_OPTIONS);
+  if (!item) {
+    return res.status(404).json({ success: false, message: 'Item not found' });
   }
-};
+  res.json({ success: true, item });
+});
 
 // Get items by category
-exports.getItemsByCategory = async (req, res) => {
-  try {
-    const items = await Item.find({ categories: req.params.categoryId, stockQty: { $gt: 0 } }).populate('categories subcategories');
-    res.json(items);
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-};
+exports.getItemsByCategory = handleAsyncRoute(async (req, res) => {
+  const items = await Item.find({ 
+    categories: req.params.categoryId, 
+    stockQty: { $gt: 0 } 
+  }).populate(POPULATE_OPTIONS);
+  
+  res.json({ success: true, items });
+});
 
 // Get items by subcategory
-exports.getItemsBySubcategory = async (req, res) => {
-  try {
-    const items = await Item.find({ subcategories: req.params.subcategoryId, stockQty: { $gt: 0 } }).populate('category subcategories');
-    res.json(items);
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-};
+exports.getItemsBySubcategory = handleAsyncRoute(async (req, res) => {
+  const items = await Item.find({ 
+    subcategories: req.params.subcategoryId, 
+    stockQty: { $gt: 0 } 
+  }).populate(POPULATE_OPTIONS);
+  
+  res.json({ success: true, items });
+});
 
 // Get featured items
-exports.getFeaturedItems = async (req, res) => {
-  try {
-    const { type } = req.params;
-    let query = { stockQty: { $gt: 0 } };
-    
-    switch(type) {
-      case 'bestseller': query.isBestSeller = true; break;
-      case 'bestrated': query.isBestRated = true; break;
-      case 'onsale': query.isOnSale = true; break;
-      case 'popular': query.isPopular = true; break;
-      default: return res.status(400).json({ message: 'Invalid type' });
-    }
-    
-    const items = await Item.find(query).populate('categories subcategories');
-    res.json(items);
-  } catch (error) {
-    res.status(500).json({ message: error.message });
+exports.getFeaturedItems = handleAsyncRoute(async (req, res) => {
+  const { type } = req.params;
+  const query = { stockQty: { $gt: 0 } };
+  
+  const typeMap = {
+    bestseller: 'isBestSeller',
+    bestrated: 'isBestRated',
+    onsale: 'isOnSale',
+    popular: 'isPopular'
+  };
+  
+  const field = typeMap[type];
+  if (!field) {
+    return res.status(400).json({ success: false, message: 'Invalid type' });
   }
-};
+  
+  query[field] = true;
+  const items = await Item.find(query).populate(POPULATE_OPTIONS);
+  res.json({ success: true, items });
+});
 
 // Create item
-exports.createItem = async (req, res) => {
-  try {
-    const itemData = { ...req.body };
-    
-    // Upload images to Cloudinary
-    if (req.files && req.files.images) {
-      const imageUrls = [];
-      for (const file of req.files.images) {
-        const url = await uploadToCloudinary(file.buffer, 'image');
-        imageUrls.push(url);
-      }
-      itemData.images = imageUrls;
-    }
-    
-    // Upload video to Cloudinary
-    if (req.files && req.files.video && req.files.video[0]) {
-      const videoUrl = await uploadToCloudinary(req.files.video[0].buffer, 'video');
-      itemData.video = videoUrl;
-    }
-    
-    const item = new Item(itemData);
-    const savedItem = await item.save();
-    res.status(201).json(savedItem);
-  } catch (error) {
-    res.status(400).json({ message: error.message });
-  }
-};
+exports.createItem = handleAsyncRoute(async (req, res) => {
+  const itemData = { ...req.body };
+  const uploadedFiles = await uploadFiles(req.files);
+  
+  Object.assign(itemData, uploadedFiles);
+  
+  const item = await new Item(itemData).save();
+  res.status(201).json({ success: true, item });
+});
 
 // Update item
-exports.updateItem = async (req, res) => {
-  try {
-    const itemData = { ...req.body };
-    
-    // Upload new images to Cloudinary if provided
-    if (req.files && req.files.images) {
-      const imageUrls = [];
-      for (const file of req.files.images) {
-        const url = await uploadToCloudinary(file.buffer, 'image');
-        imageUrls.push(url);
-      }
-      itemData.images = imageUrls;
-    }
-    
-    // Upload new video to Cloudinary if provided
-    if (req.files && req.files.video && req.files.video[0]) {
-      const videoUrl = await uploadToCloudinary(req.files.video[0].buffer, 'video');
-      itemData.video = videoUrl;
-    }
-    
-    const item = await Item.findByIdAndUpdate(req.params.id, itemData, { new: true });
-    if (!item) return res.status(404).json({ message: 'Item not found' });
-    res.json(item);
-  } catch (error) {
-    res.status(400).json({ message: error.message });
+exports.updateItem = handleAsyncRoute(async (req, res) => {
+  const itemData = { ...req.body };
+  const uploadedFiles = await uploadFiles(req.files);
+  
+  Object.assign(itemData, uploadedFiles);
+  
+  const item = await Item.findByIdAndUpdate(
+    req.params.id, 
+    itemData, 
+    { new: true, runValidators: true }
+  );
+  
+  if (!item) {
+    return res.status(404).json({ success: false, message: 'Item not found' });
   }
-};
+  
+  res.json({ success: true, item });
+});
 
 // Delete item
-exports.deleteItem = async (req, res) => {
-  try {
-    const item = await Item.findByIdAndDelete(req.params.id);
-    if (!item) return res.status(404).json({ message: 'Item not found' });
-    res.json({ message: 'Item deleted successfully' });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
+exports.deleteItem = handleAsyncRoute(async (req, res) => {
+  const item = await Item.findByIdAndDelete(req.params.id);
+  if (!item) {
+    return res.status(404).json({ success: false, message: 'Item not found' });
   }
-};
+  res.json({ success: true, message: 'Item deleted successfully' });
+});

@@ -62,6 +62,12 @@ const itemSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+  weight: {
+    type: Number,
+    required: true,
+    min: 1,
+    default: 100 // Default weight in grams
+  },
   status: {
     type: String,
     enum: ['active', 'inactive'],

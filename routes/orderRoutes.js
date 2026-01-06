@@ -14,13 +14,19 @@ router.get('/my/:userId', orderController.getMyOrders);
 // Get order by ID
 router.get('/:id', orderController.getOrderById);
 
-// Create new order
-router.post('/', orderController.createOrder);
-
 // Update order status
 router.patch('/:id/status', orderController.updateOrderStatus);
 
 // Update payment status
 router.patch('/:id/payment-status', orderController.updatePaymentStatus);
+
+// Update delivery status (for self-delivery orders only)
+router.patch('/:id/delivery-status', orderController.updateDeliveryStatus);
+
+// Bulk status update
+router.patch('/bulk/status', orderController.bulkUpdateStatus);
+
+// Validate status transition
+router.get('/validate-transition', orderController.validateStatusTransition);
 
 module.exports = router;

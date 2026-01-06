@@ -56,7 +56,7 @@ exports.getDashboardStats = async (req, res) => {
       newOrders,
       totalCustomers,
       ticketsResolved,
-      revenueToday: (revenueToday[0]?.total || 0) / 100,
+      revenueToday: revenueToday[0]?.total || 0,
       failedOrders
     });
   } catch (error) {
