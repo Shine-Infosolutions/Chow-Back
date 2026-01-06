@@ -28,25 +28,25 @@ app.get("/favicon.ico", (req, res) => res.status(204).end());
 
 // API Routes
 const routes = {
-  "/api/categories": "./routes/categoryRoutes",
-  "/api/subcategories": "./routes/subcategoryRoutes",
-  "/api/items": "./routes/itemRoutes",
-  "/api/dashboard": "./routes/dashboardRoutes",
-  "/api/search": "./routes/searchRoutes",
-  "/api/tickets": "./routes/tickets",
-  "/api/auth": "./routes/authRoutes",
-  "/api/orders": "./routes/orderRoutes",
-  "/api/users": "./routes/userRoutes",
-  "/api/admin": "./routes/adminRoutes",
-  "/api": "./routes/distanceRoutes",
-  "/api/payment": "./routes/paymentRoutes",
-  "/api/sweet-deals": "./routes/sweetDealRoutes",
-  "/api/delhivery": "./routes/delhiveryRoutes",
-  "/api/delivery": "./routes/deliveryRoutes"
+  "/api/categories": require("./routes/categoryRoutes"),
+  "/api/subcategories": require("./routes/subcategoryRoutes"),
+  "/api/items": require("./routes/itemRoutes"),
+  "/api/dashboard": require("./routes/dashboardRoutes"),
+  "/api/search": require("./routes/searchRoutes"),
+  "/api/tickets": require("./routes/tickets"),
+  "/api/auth": require("./routes/authRoutes"),
+  "/api/orders": require("./routes/orderRoutes"),
+  "/api/users": require("./routes/userRoutes"),
+  "/api/admin": require("./routes/adminRoutes"),
+  "/api": require("./routes/distanceRoutes"),
+  "/api/payment": require("./routes/paymentRoutes"),
+  "/api/sweet-deals": require("./routes/sweetDealRoutes"),
+  "/api/delhivery": require("./routes/delhiveryRoutes"),
+  "/api/delivery": require("./routes/deliveryRoutes")
 };
 
-Object.entries(routes).forEach(([path, route]) => {
-  app.use(path, require(route));
+Object.entries(routes).forEach(([path, router]) => {
+  app.use(path, router);
 });
 
 // Health check
