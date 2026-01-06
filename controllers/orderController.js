@@ -192,6 +192,84 @@ exports.getOrderById = async (req, res) => {
 exports.updateOrderStatus = (req, res) => handleOrderUpdate(req, res, 'status');
 exports.updatePaymentStatus = (req, res) => handleOrderUpdate(req, res, 'paymentStatus');
 
+// Manual delivery status update for self-delivery orders
+exports.updateDeliveryStatus = async (req, res) => {
+  try {
+    const { deliveryStatus } = req.body;
+    
+    if (!deliveryStatus) {
+      return res.status(400).json({ success: false, message: 'Delivery status required' });
+    }
+
+    const order = await Order.findById(req.params.id);
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+
+    // Only allow manual updates for self-delivery orders
+    if (order.deliveryProvider !== 'self') {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Manual delivery status updates only allowed for self-delivery orders' 
+      });
+    }
+
+    order.deliveryStatus = deliveryStatus;
+    
+    // Auto-update order status based on delivery status
+    if (deliveryStatus === 'DELIVERED') {
+      order.status = 'delivered';
+    } else if (deliveryStatus === 'IN_TRANSIT') {
+      order.status = 'shipped';
+    }
+    
+    await order.save();
+    res.json({ success: true, order });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+};
+
+// Bulk status update
+exports.bulkUpdateStatus = async (req, res) => {
+  try {
+    const { orderIds, status } = req.body;
+    if (!orderIds?.length || !status) {
+      return res.status(400).json({ success: false, message: 'Order IDs and status required' });
+    }
+
+    const result = await Order.updateMany(
+      { _id: { $in: orderIds } },
+      { status, ...(status === 'delivered' && { deliveryStatus: 'DELIVERED' }) },
+      { runValidators: true }
+    );
+
+    res.json({ success: true, updated: result.modifiedCount });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+};
+
+// Status transition validation
+exports.validateStatusTransition = async (req, res) => {
+  try {
+    const { currentStatus, newStatus } = req.query;
+    const validTransitions = {
+      pending: ['confirmed', 'cancelled'],
+      confirmed: ['shipped', 'delivered', 'cancelled'],
+      shipped: ['delivered', 'cancelled'],
+      delivered: [],
+      cancelled: [],
+      failed: ['pending']
+    };
+
+    const isValid = validTransitions[currentStatus]?.includes(newStatus);
+    res.json({ success: true, valid: isValid });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+};
+
 exports.getMyOrders = async (req, res) => {
   try {
     const orders = await Order.find({

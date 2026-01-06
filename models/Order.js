@@ -176,6 +176,16 @@ orderSchema.pre('save', function(next) {
     this.status = 'cancelled';
   }
   
+  // Auto-set timestamps
+  if (this.isModified('status')) {
+    if (this.status === 'confirmed' && !this.confirmedAt) {
+      this.confirmedAt = new Date();
+    }
+    if (this.status === 'cancelled' && !this.cancelledAt) {
+      this.cancelledAt = new Date();
+    }
+  }
+  
   next();
 });
 

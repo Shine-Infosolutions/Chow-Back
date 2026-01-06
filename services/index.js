@@ -154,20 +154,36 @@ class DelhiveryService {
   }
 
   async createShipment(orderData) {
-    if (!orderData?.orderId) {
-      return { success: false, error: 'Order data with orderId is required' };
-    }
+    console.log('=== DELHIVERY SERVICE CREATE SHIPMENT DEBUG ===');
+    console.log('Input orderData:', JSON.stringify(orderData, null, 2));
     
-    if (isGorakhpurPincode(orderData.pincode)) {
-      return { success: false, error: 'Gorakhpur orders use self-delivery' };
-    }
-    
-    if (!this.useRealAPI) {
-      return this._mockCreateShipment(orderData);
-    }
-
     try {
+      if (!orderData?.orderId) {
+        console.log('ERROR: Missing orderId in orderData');
+        return { success: false, error: 'Order data with orderId is required' };
+      }
+      
+      console.log('Checking if pincode is Gorakhpur:', orderData.pincode);
+      if (isGorakhpurPincode(orderData.pincode)) {
+        console.log('ERROR: Gorakhpur pincode detected, should use self-delivery');
+        return { success: false, error: 'Gorakhpur orders use self-delivery' };
+      }
+      
+      console.log('useRealAPI setting:', this.useRealAPI);
+      if (!this.useRealAPI) {
+        console.log('Using mock shipment creation');
+        const mockResult = this._mockCreateShipment(orderData);
+        console.log('Mock result:', JSON.stringify(mockResult, null, 2));
+        return mockResult;
+      }
+
+      console.log('Building shipment payload...');
       const shipmentData = this._buildShipmentPayload(orderData);
+      console.log('Built shipment payload:', JSON.stringify(shipmentData, null, 2));
+      
+      console.log('Making API call to Delhivery...');
+      console.log('API URL:', `${this.baseURL}/cmu/create.json`);
+      console.log('API Token:', this.token ? 'Present' : 'Missing');
       
       const response = await this.axiosInstance.post('/cmu/create.json', 
         `format=json&data=${JSON.stringify(shipmentData)}`,
@@ -177,18 +193,34 @@ class DelhiveryService {
         }
       );
 
+      console.log('Delhivery API response status:', response.status);
+      console.log('Delhivery API response data:', JSON.stringify(response.data, null, 2));
+
       const packageData = response.data.packages?.[0];
+      console.log('Package data:', JSON.stringify(packageData, null, 2));
+      
       if (!packageData?.waybill) {
-        return { success: false, error: 'No waybill received' };
+        console.log('ERROR: No waybill in response');
+        return { success: false, error: 'No waybill received from Delhivery API' };
       }
 
-      return {
+      const result = {
         success: true,
         waybill: packageData.waybill,
         status: 'SHIPMENT_CREATED',
         estimatedDelivery: packageData.expected_delivery_date
       };
+      
+      console.log('SUCCESS: Returning result:', JSON.stringify(result, null, 2));
+      console.log('=== DELHIVERY SERVICE DEBUG END ===');
+      return result;
     } catch (error) {
+      console.error('=== DELHIVERY SERVICE ERROR ===');
+      console.error('Error message:', error.message);
+      console.error('Error response data:', error.response?.data);
+      console.error('Error response status:', error.response?.status);
+      console.error('Error stack:', error.stack);
+      console.error('=== DELHIVERY SERVICE ERROR END ===');
       return { success: false, error: `Shipment creation failed: ${error.message}` };
     }
   }
@@ -231,48 +263,75 @@ class DelhiveryService {
   }
 
   _buildShipmentPayload(orderData) {
-    const requiredFields = ['customerName', 'address', 'pincode', 'city', 'state', 'phone', 'orderId'];
-    const missingField = requiredFields.find(field => !orderData[field]);
-    if (missingField) {
-      throw new Error(`Missing required field: ${missingField}`);
-    }
+    console.log('=== BUILD SHIPMENT PAYLOAD DEBUG ===');
+    console.log('Input orderData:', JSON.stringify(orderData, null, 2));
     
-    const env = process.env;
-    return {
-      shipments: [{
-        name: orderData.customerName.substring(0, 50),
-        add: orderData.address.substring(0, 200),
-        pin: orderData.pincode,
-        city: orderData.city.substring(0, 50),
-        state: orderData.state.substring(0, 50),
-        country: 'India',
-        phone: orderData.phone.replace(/[^0-9]/g, '').substring(0, 10),
-        order: String(orderData.orderId).substring(0, 50),
-        payment_mode: orderData.paymentMode || 'PREPAID',
-        return_pin: env.RETURN_PINCODE || this.pickupPincode,
-        return_city: env.RETURN_CITY || 'Gorakhpur',
-        return_phone: env.RETURN_PHONE || '9999999999',
-        return_add: env.RETURN_ADDRESS || 'Return Address',
-        return_state: env.RETURN_STATE || 'Uttar Pradesh',
-        products_desc: (orderData.itemsDescription || 'Food Items').substring(0, 300),
-        hsn_code: '21069099',
-        cod_amount: 0,
-        order_date: new Date().toISOString().split('T')[0],
-        total_amount: Math.round(orderData.totalAmount || 0),
-        seller_add: env.SELLER_ADDRESS || 'Seller Address',
-        seller_name: env.SELLER_NAME || 'Chow',
-        seller_inv: `INV-${Date.now()}`,
-        quantity: orderData.totalQuantity || 1,
-        waybill: '',
-        shipment_width: 15,
-        shipment_height: 10,
-        shipment_length: 20,
-        weight: Math.max(1, Math.ceil((orderData.totalWeight || 500) / 1000)),
-        seller_gst_tin: env.SELLER_GST || '',
-        shipping_mode: 'Surface',
-        address_type: 'home'
-      }]
-    };
+    try {
+      const requiredFields = ['customerName', 'address', 'pincode', 'city', 'state', 'phone', 'orderId'];
+      console.log('Checking required fields...');
+      
+      for (const field of requiredFields) {
+        const value = orderData[field];
+        console.log(`- ${field}: ${value} (type: ${typeof value})`);
+        if (!value) {
+          console.log(`ERROR: Missing required field: ${field}`);
+          throw new Error(`Missing required field: ${field}`);
+        }
+      }
+      
+      const env = process.env;
+      console.log('Environment variables:');
+      console.log('- RETURN_PINCODE:', env.RETURN_PINCODE || 'Not set');
+      console.log('- RETURN_CITY:', env.RETURN_CITY || 'Not set');
+      console.log('- RETURN_PHONE:', env.RETURN_PHONE || 'Not set');
+      console.log('- SELLER_NAME:', env.SELLER_NAME || 'Not set');
+      
+      const payload = {
+        shipments: [{
+          name: String(orderData.customerName || '').substring(0, 50),
+          add: String(orderData.address || '').substring(0, 200),
+          pin: String(orderData.pincode || ''),
+          city: String(orderData.city || '').substring(0, 50),
+          state: String(orderData.state || '').substring(0, 50),
+          country: 'India',
+          phone: String(orderData.phone || '').replace(/[^0-9]/g, '').substring(0, 10),
+          order: String(orderData.orderId || '').substring(0, 50),
+          payment_mode: orderData.paymentMode || 'PREPAID',
+          return_pin: env.RETURN_PINCODE || this.pickupPincode,
+          return_city: env.RETURN_CITY || 'Gorakhpur',
+          return_phone: env.RETURN_PHONE || '9999999999',
+          return_add: env.RETURN_ADDRESS || 'Return Address',
+          return_state: env.RETURN_STATE || 'Uttar Pradesh',
+          products_desc: String(orderData.itemsDescription || 'Food Items').substring(0, 300),
+          hsn_code: '21069099',
+          cod_amount: 0,
+          order_date: new Date().toISOString().split('T')[0],
+          total_amount: Math.round(Number(orderData.totalAmount) || 0),
+          seller_add: env.SELLER_ADDRESS || 'Seller Address',
+          seller_name: env.SELLER_NAME || 'Chow',
+          seller_inv: `INV-${Date.now()}`,
+          quantity: Number(orderData.totalQuantity) || 1,
+          waybill: '',
+          shipment_width: 15,
+          shipment_height: 10,
+          shipment_length: 20,
+          weight: Math.max(1, Math.ceil((Number(orderData.totalWeight) || 500) / 1000)),
+          seller_gst_tin: env.SELLER_GST || '',
+          shipping_mode: 'Surface',
+          address_type: 'home'
+        }]
+      };
+      
+      console.log('Built payload:', JSON.stringify(payload, null, 2));
+      console.log('=== BUILD SHIPMENT PAYLOAD DEBUG END ===');
+      return payload;
+    } catch (error) {
+      console.error('=== BUILD PAYLOAD ERROR ===');
+      console.error('Error message:', error.message);
+      console.error('Error stack:', error.stack);
+      console.error('=== BUILD PAYLOAD ERROR END ===');
+      throw new Error(`Failed to build shipment payload: ${error.message}`);
+    }
   }
 
   _mapDelhiveryStatus(delhiveryStatus) {
@@ -465,6 +524,7 @@ class DeliveryService {
   }
 
   shouldCreateDelhiveryShipment(order) {
+    if (!order) return false;
     return order.deliveryProvider === 'delhivery' && 
            order.paymentStatus === 'paid' && 
            order.status === 'confirmed' && 
