@@ -2,66 +2,63 @@ const Item = require('../models/Item');
 const { uploadToCloudinary } = require('../middleware');
 
 const POPULATE_OPTIONS = 'categories subcategories';
-const DEFAULT_PAGINATION = { page: 1, limit: 10 };
+const STOCK_FILTER = { stockQty: { $gt: 0 } };
 
-const getPaginationParams = (query) => {
-  const page = parseInt(query.page) || DEFAULT_PAGINATION.page;
-  const limit = parseInt(query.limit) || DEFAULT_PAGINATION.limit;
-  const skip = (page - 1) * limit;
-  return { page, limit, skip };
+const getPagination = (query) => {
+  const page = Math.max(1, parseInt(query.page) || 1);
+  const limit = Math.min(100, Math.max(1, parseInt(query.limit) || 10));
+  return { page, limit, skip: (page - 1) * limit };
 };
 
-const handleAsyncRoute = (fn) => async (req, res) => {
-  try {
-    await fn(req, res);
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
+const asyncHandler = (fn) => (req, res, next) => {
+  Promise.resolve(fn(req, res, next)).catch(next);
 };
 
 const uploadFiles = async (files) => {
-  const result = {};
-  
+  const uploads = {};
   if (files?.images) {
-    result.images = await Promise.all(
+    uploads.images = await Promise.all(
       files.images.map(file => uploadToCloudinary(file.buffer, 'image'))
     );
   }
-  
   if (files?.video?.[0]) {
-    result.video = await uploadToCloudinary(files.video[0].buffer, 'video');
+    uploads.video = await uploadToCloudinary(files.video[0].buffer, 'video');
   }
-  
-  return result;
+  return uploads;
 };
 
-// Get all items
-exports.getItems = handleAsyncRoute(async (req, res) => {
-  const { page, limit, skip } = getPaginationParams(req.query);
-
+const getItemsWithQuery = async (query, pagination) => {
+  const { page, limit, skip } = pagination;
   const [items, total] = await Promise.all([
-    Item.find()
-      .populate(POPULATE_OPTIONS)
-      .skip(skip)
-      .limit(limit)
-      .sort({ createdAt: -1 }),
-    Item.countDocuments()
+    Item.find(query).populate(POPULATE_OPTIONS).skip(skip).limit(limit).sort({ createdAt: -1 }),
+    Item.countDocuments(query)
   ]);
-  
-  res.json({
+  return {
     success: true,
     items,
-    pagination: {
-      page,
-      limit,
-      total,
-      pages: Math.ceil(total / limit)
-    }
-  });
+    pagination: { page, limit, total, pages: Math.ceil(total / limit) }
+  };
+};
+
+exports.getItems = asyncHandler(async (req, res) => {
+  const result = await getItemsWithQuery(STOCK_FILTER, getPagination(req.query));
+  res.json(result);
 });
 
-// Get item by ID
-exports.getItemById = handleAsyncRoute(async (req, res) => {
+exports.getAdminItems = asyncHandler(async (req, res) => {
+  const result = await getItemsWithQuery({}, getPagination(req.query));
+  res.json(result);
+});
+
+exports.getItemById = asyncHandler(async (req, res) => {
+  const item = await Item.findById(req.params.id).populate(POPULATE_OPTIONS);
+  if (!item || item.stockQty <= 0) {
+    return res.status(404).json({ success: false, message: 'Item not found or out of stock' });
+  }
+  res.json({ success: true, item });
+});
+
+exports.getAdminItemById = asyncHandler(async (req, res) => {
   const item = await Item.findById(req.params.id).populate(POPULATE_OPTIONS);
   if (!item) {
     return res.status(404).json({ success: false, message: 'Item not found' });
@@ -69,69 +66,44 @@ exports.getItemById = handleAsyncRoute(async (req, res) => {
   res.json({ success: true, item });
 });
 
-// Get items by category
-exports.getItemsByCategory = handleAsyncRoute(async (req, res) => {
-  const items = await Item.find({ 
-    categories: req.params.categoryId, 
-    stockQty: { $gt: 0 } 
-  }).populate(POPULATE_OPTIONS);
-  
+exports.getItemsByCategory = asyncHandler(async (req, res) => {
+  const items = await Item.find({ categories: req.params.categoryId, ...STOCK_FILTER }).populate(POPULATE_OPTIONS);
   res.json({ success: true, items });
 });
 
-// Get items by subcategory
-exports.getItemsBySubcategory = handleAsyncRoute(async (req, res) => {
-  const items = await Item.find({ 
-    subcategories: req.params.subcategoryId, 
-    stockQty: { $gt: 0 } 
-  }).populate(POPULATE_OPTIONS);
-  
+exports.getItemsBySubcategory = asyncHandler(async (req, res) => {
+  const items = await Item.find({ subcategories: req.params.subcategoryId, ...STOCK_FILTER }).populate(POPULATE_OPTIONS);
   res.json({ success: true, items });
 });
 
-// Get featured items
-exports.getFeaturedItems = handleAsyncRoute(async (req, res) => {
-  const { type } = req.params;
-  const query = { stockQty: { $gt: 0 } };
-  
+exports.getFeaturedItems = asyncHandler(async (req, res) => {
   const typeMap = {
     bestseller: 'isBestSeller',
-    bestrated: 'isBestRated',
+    bestrated: 'isBestRated', 
     onsale: 'isOnSale',
     popular: 'isPopular'
   };
   
-  const field = typeMap[type];
+  const field = typeMap[req.params.type];
   if (!field) {
     return res.status(400).json({ success: false, message: 'Invalid type' });
   }
   
-  query[field] = true;
-  const items = await Item.find(query).populate(POPULATE_OPTIONS);
+  const items = await Item.find({ [field]: true, ...STOCK_FILTER }).populate(POPULATE_OPTIONS);
   res.json({ success: true, items });
 });
 
-// Create item
-exports.createItem = handleAsyncRoute(async (req, res) => {
-  const itemData = { ...req.body };
-  const uploadedFiles = await uploadFiles(req.files);
-  
-  Object.assign(itemData, uploadedFiles);
-  
-  const item = await new Item(itemData).save();
+exports.createItem = asyncHandler(async (req, res) => {
+  const uploads = await uploadFiles(req.files);
+  const item = await new Item({ ...req.body, ...uploads }).save();
   res.status(201).json({ success: true, item });
 });
 
-// Update item
-exports.updateItem = handleAsyncRoute(async (req, res) => {
-  const itemData = { ...req.body };
-  const uploadedFiles = await uploadFiles(req.files);
-  
-  Object.assign(itemData, uploadedFiles);
-  
+exports.updateItem = asyncHandler(async (req, res) => {
+  const uploads = await uploadFiles(req.files);
   const item = await Item.findByIdAndUpdate(
-    req.params.id, 
-    itemData, 
+    req.params.id,
+    { ...req.body, ...uploads },
     { new: true, runValidators: true }
   );
   
@@ -142,8 +114,7 @@ exports.updateItem = handleAsyncRoute(async (req, res) => {
   res.json({ success: true, item });
 });
 
-// Delete item
-exports.deleteItem = handleAsyncRoute(async (req, res) => {
+exports.deleteItem = asyncHandler(async (req, res) => {
   const item = await Item.findByIdAndDelete(req.params.id);
   if (!item) {
     return res.status(404).json({ success: false, message: 'Item not found' });

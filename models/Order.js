@@ -59,18 +59,18 @@ const orderSchema = new mongoose.Schema({
   },
   deliveryProvider: {
     type: String,
-    enum: ['delhivery', 'self'],
-    default: 'delhivery',
+    enum: ['DELHIVERY', 'SELF'],
+    default: 'DELHIVERY',
     validate: {
       validator: function(value) {
         // CRITICAL: Enforce GKP business rule at schema level
-        if (value === 'delhivery') {
+        if (value === 'DELHIVERY') {
           // Use deliveryPincode field for validation
           if (this.deliveryPincode && isGorakhpurPincode(this.deliveryPincode)) {
             return false; // Block Delhivery for GKP
           }
         }
-        return ['delhivery', 'self'].includes(value);
+        return ['DELHIVERY', 'SELF'].includes(value);
       },
       message: 'BLOCKED: Delhivery cannot be used for Gorakhpur pincodes. Use self delivery.'
     }
@@ -85,7 +85,7 @@ const orderSchema = new mongoose.Schema({
   },
   deliveryStatus: {
     type: String,
-    enum: ['PENDING', 'SHIPMENT_CREATED', 'IN_TRANSIT', 'DELIVERED', 'RTO'],
+    enum: ['PENDING', 'SHIPMENT_CREATED', 'IN_TRANSIT', 'OUT_FOR_DELIVERY', 'DELIVERED', 'RTO', 'PRE_PICKUP_CANCEL'],
     default: 'PENDING'
   },
   waybill: {
@@ -163,17 +163,9 @@ orderSchema.pre('save', function(next) {
   }
   
   // Self delivery orders NEVER have waybill
-  if (this.deliveryProvider === 'self' && this.waybill) {
+  if (this.deliveryProvider === 'SELF' && this.waybill) {
     this.waybill = undefined;
     this.shipmentCreated = false;
-  }
-  
-  // Status consistency
-  if (this.deliveryStatus === 'DELIVERED' && this.status !== 'delivered') {
-    this.status = 'delivered';
-  }
-  if (this.deliveryStatus === 'RTO' && this.status !== 'cancelled') {
-    this.status = 'cancelled';
   }
   
   // Auto-set timestamps

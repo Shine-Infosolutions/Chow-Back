@@ -4,7 +4,9 @@ const itemController = require('../controllers/itemController');
 const { upload } = require('../middleware');
 
 router.get('/all', itemController.getItems);
+router.get('/admin/all', itemController.getAdminItems);
 router.get('/get/:id', itemController.getItemById);
+router.get('/admin/get/:id', itemController.getAdminItemById);
 router.get('/category/:categoryId', itemController.getItemsByCategory);
 router.get('/subcategory/:subcategoryId', itemController.getItemsBySubcategory);
 router.get('/featured/:type', itemController.getFeaturedItems);

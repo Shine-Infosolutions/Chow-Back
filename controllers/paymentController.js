@@ -62,7 +62,7 @@ exports.createOrder = async (req, res) => {
     }
 
     // Validate delivery provider selection (prevents Delhivery for Gorakhpur)
-    const deliveryProvider = deliveryInfo.provider.toLowerCase();
+    const deliveryProvider = deliveryInfo.provider.toUpperCase();
     deliveryService.validateDeliveryProvider(orderData.deliveryPincode, deliveryProvider);
     
     const shippingTotal = deliveryInfo.charge;

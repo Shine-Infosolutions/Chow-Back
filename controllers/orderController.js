@@ -1,17 +1,16 @@
 const Order = require('../models/Order');
 
+const { deriveOrderStatus, updateOrderSignals, getUpdatePermissions } = require('../utils/orderStatusDeriver');
+
 const TAX_RATE = 0.05;
 
 const QUERIES = {
   SUCCESS: {
-    status: { $in: ['confirmed', 'shipped', 'delivered'] },
-    paymentStatus: 'paid'
+    status: { $in: ['pending', 'confirmed', 'shipped', 'delivered', 'cancelled'] }
   },
   FAILED: {
     $or: [
       { status: 'failed' },
-      { status: 'cancelled' },
-      { status: 'pending' },
       { paymentStatus: 'failed' }
     ]
   }
@@ -72,7 +71,7 @@ const formatOrderData = (order) => {
     shippingRefunded: o.shipping?.refunded || false,
     shipmentCreated: o.shipmentCreated || false,
     totalWeight: o.totalWeight || 0,
-    distance: o.distance || 0,
+    distance: o.distance, // No fallback - null is acceptable
     shipmentAttempts: o.shipmentAttempts || 0,
     paymentMode: o.paymentMode || null,
     rtoHandled: o.rtoHandled || false,
@@ -110,31 +109,8 @@ const getOrdersWithPagination = async (query, page, limit) => {
   };
 };
 
-const handleOrderUpdate = async (req, res, updateField) => {
-  try {
-    const updateValue = req.body[updateField];
-    if (!updateValue) {
-      return res.status(400).json({ 
-        success: false, 
-        message: `${updateField.charAt(0).toUpperCase() + updateField.slice(1)} required` 
-      });
-    }
-
-    const order = await Order.findByIdAndUpdate(
-      req.params.id,
-      { [updateField]: updateValue },
-      { new: true, runValidators: true }
-    );
-
-    if (!order) {
-      return res.status(404).json({ success: false, message: 'Order not found' });
-    }
-
-    res.json({ success: true, order });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-};
+// REMOVED: Unsafe generic update function
+// Status updates now go through safeStatusUpdate()
 
 exports.getFailedOrders = async (req, res) => {
   try {
@@ -189,10 +165,34 @@ exports.getOrderById = async (req, res) => {
   }
 };
 
-exports.updateOrderStatus = (req, res) => handleOrderUpdate(req, res, 'status');
-exports.updatePaymentStatus = (req, res) => handleOrderUpdate(req, res, 'paymentStatus');
 
-// Manual delivery status update for self-delivery orders
+
+exports.updatePaymentStatus = async (req, res) => {
+  try {
+    const { paymentStatus } = req.body;
+    if (!paymentStatus) {
+      return res.status(400).json({ success: false, message: 'Payment status required' });
+    }
+
+    const order = await Order.findById(req.params.id);
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+
+    const updateFields = updateOrderSignals(order, { paymentStatus }, { source: 'ADMIN' });
+    
+    await Order.findByIdAndUpdate(
+      req.params.id,
+      updateFields,
+      { new: true, runValidators: true }
+    );
+
+    res.json({ success: true, order: { ...order.toObject(), ...updateFields } });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+};
+
 exports.updateDeliveryStatus = async (req, res) => {
   try {
     const { deliveryStatus } = req.body;
@@ -206,69 +206,120 @@ exports.updateDeliveryStatus = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Order not found' });
     }
 
-    // Only allow manual updates for self-delivery orders
-    if (order.deliveryProvider !== 'self') {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Manual delivery status updates only allowed for self-delivery orders' 
+    if (order.deliveryProvider !== 'SELF') {
+      return res.status(403).json({ success: false, message: 'Cannot update delivery for provider orders' });
+    }
+
+    const updateFields = updateOrderSignals(order, { deliveryStatus }, { source: 'ADMIN' });
+    
+    if (deliveryStatus === 'DELIVERED') {
+      updateFields.deliveredAt = new Date();
+    }
+    
+    await Order.findByIdAndUpdate(
+      req.params.id,
+      updateFields,
+      { new: true, runValidators: true }
+    );
+    
+    res.json({ success: true, order: { ...order.toObject(), ...updateFields } });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+};
+
+// Add back the general status update endpoint
+exports.updateStatus = async (req, res) => {
+  try {
+    const { status } = req.body;
+    
+    if (!status) {
+      return res.status(400).json({ success: false, message: 'Status required' });
+    }
+
+    const order = await Order.findById(req.params.id);
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+
+    // Only allow status updates for SELF delivery orders
+    if (order.deliveryProvider !== 'SELF') {
+      return res.status(403).json({ success: false, message: 'Status updates only allowed for SELF delivery orders' });
+    }
+
+    // Map order status to delivery status for SELF orders
+    let updates = {};
+    switch (status.toLowerCase()) {
+      case 'pending':
+        updates.deliveryStatus = 'PENDING';
+        updates.paymentStatus = 'pending';
+        break;
+      case 'confirmed':
+        updates.deliveryStatus = 'PENDING'; // Keep delivery pending
+        updates.paymentStatus = 'paid'; // Ensure payment is paid
+        break;
+      case 'shipped':
+        updates.deliveryStatus = 'OUT_FOR_DELIVERY';
+        break;
+      case 'delivered':
+        updates.deliveryStatus = 'DELIVERED';
+        break;
+      case 'cancelled':
+        updates.deliveryStatus = 'PRE_PICKUP_CANCEL';
+        break;
+      default:
+        return res.status(400).json({ success: false, message: 'Invalid status' });
+    }
+
+    const updateFields = updateOrderSignals(order, updates, { source: 'ADMIN' });
+    
+    await Order.findByIdAndUpdate(
+      req.params.id,
+      updateFields,
+      { new: true, runValidators: true }
+    );
+    
+    res.json({ success: true, order: { ...order.toObject(), ...updateFields } });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+};
+
+// ADMIN API: Bulk update (SELF delivery only)
+exports.bulkUpdateStatus = async (req, res) => {
+  try {
+    const { orderIds, deliveryStatus } = req.body;
+    if (!orderIds?.length || !deliveryStatus) {
+      return res.status(400).json({ success: false, message: 'Order IDs and deliveryStatus required' });
+    }
+
+    const orders = await Order.find({ 
+      _id: { $in: orderIds },
+      deliveryProvider: 'SELF' // Only SELF delivery allowed
+    });
+
+    const updates = [];
+    for (const order of orders) {
+      const updateFields = updateOrderSignals(order, { deliveryStatus }, { source: 'ADMIN' });
+      updates.push({
+        updateOne: {
+          filter: { _id: order._id },
+          update: updateFields
+        }
       });
     }
 
-    order.deliveryStatus = deliveryStatus;
-    
-    // Auto-update order status based on delivery status
-    if (deliveryStatus === 'DELIVERED') {
-      order.status = 'delivered';
-    } else if (deliveryStatus === 'IN_TRANSIT') {
-      order.status = 'shipped';
-    }
-    
-    await order.save();
-    res.json({ success: true, order });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-};
-
-// Bulk status update
-exports.bulkUpdateStatus = async (req, res) => {
-  try {
-    const { orderIds, status } = req.body;
-    if (!orderIds?.length || !status) {
-      return res.status(400).json({ success: false, message: 'Order IDs and status required' });
+    if (updates.length > 0) {
+      await Order.bulkWrite(updates);
     }
 
-    const result = await Order.updateMany(
-      { _id: { $in: orderIds } },
-      { status, ...(status === 'delivered' && { deliveryStatus: 'DELIVERED' }) },
-      { runValidators: true }
-    );
-
-    res.json({ success: true, updated: result.modifiedCount });
+    res.json({ success: true, updated: updates.length });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 };
 
-// Status transition validation
-exports.validateStatusTransition = async (req, res) => {
-  try {
-    const { currentStatus, newStatus } = req.query;
-    const validTransitions = {
-      pending: ['confirmed', 'cancelled'],
-      confirmed: ['shipped', 'delivered', 'cancelled'],
-      shipped: ['delivered', 'cancelled'],
-      delivered: [],
-      cancelled: [],
-      failed: ['pending']
-    };
 
-    const isValid = validTransitions[currentStatus]?.includes(newStatus);
-    res.json({ success: true, valid: isValid });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-};
 
 exports.getMyOrders = async (req, res) => {
   try {
@@ -286,6 +337,24 @@ exports.getMyOrders = async (req, res) => {
         ...o.toObject(),
         deliveryAddress: getDeliveryAddress(o.toObject())
       }))
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+};
+
+exports.getOrderPermissions = async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.id);
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+
+    const permissions = getUpdatePermissions(order.deliveryProvider, 'ADMIN');
+    res.json({ 
+      success: true, 
+      permissions,
+      deliveryProvider: order.deliveryProvider
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
