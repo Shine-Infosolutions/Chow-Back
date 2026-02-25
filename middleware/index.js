@@ -2,7 +2,7 @@ const jwt = require('jsonwebtoken');
 const multer = require('multer');
 const User = require('../models/User');
 const Order = require('../models/Order');
-const { cloudinary } = require('../config');
+const { cloudinary, isCloudinaryConfigured } = require('../config');
 const { isGorakhpurPincode } = require('../config/gorakhpurPincodes');
 
 // Authentication Middleware
@@ -100,6 +100,10 @@ const upload = multer({
 });
 
 const uploadToCloudinary = (buffer, resourceType = 'image') => {
+  if (!isCloudinaryConfigured || !cloudinary) {
+    return Promise.reject(new Error('Cloudinary not configured. Please add valid credentials to .env file'));
+  }
+  
   return new Promise((resolve, reject) => {
     cloudinary.uploader.upload_stream(
       {

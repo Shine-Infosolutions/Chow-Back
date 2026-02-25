@@ -30,15 +30,23 @@ const connectDB = async () => {
 
 // Cloudinary Configuration
 const { CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET } = process.env;
-if (!CLOUDINARY_CLOUD_NAME || !CLOUDINARY_API_KEY || !CLOUDINARY_API_SECRET) {
-  console.warn("Cloudinary configuration incomplete");
-}
+const isCloudinaryConfigured = CLOUDINARY_CLOUD_NAME && 
+  CLOUDINARY_API_KEY && 
+  CLOUDINARY_API_SECRET && 
+  CLOUDINARY_CLOUD_NAME !== 'your_cloud_name' &&
+  CLOUDINARY_API_KEY !== 'your_api_key' &&
+  CLOUDINARY_API_SECRET !== 'your_api_secret';
 
-cloudinary.config({
-  cloud_name: CLOUDINARY_CLOUD_NAME,
-  api_key: CLOUDINARY_API_KEY,
-  api_secret: CLOUDINARY_API_SECRET
-});
+if (isCloudinaryConfigured) {
+  cloudinary.config({
+    cloud_name: CLOUDINARY_CLOUD_NAME,
+    api_key: CLOUDINARY_API_KEY,
+    api_secret: CLOUDINARY_API_SECRET
+  });
+  console.log('Cloudinary configured');
+} else {
+  console.warn('Cloudinary not configured - image uploads will be disabled');
+}
 
 // Razorpay Configuration
 const { RAZORPAY_KEY_ID, RAZORPAY_SECRET } = process.env;
@@ -55,6 +63,7 @@ if (RAZORPAY_KEY_ID && RAZORPAY_SECRET) {
 
 module.exports = {
   connectDB,
-  cloudinary,
-  razorpay: razorpayInstance
+  cloudinary: isCloudinaryConfigured ? cloudinary : null,
+  razorpay: razorpayInstance,
+  isCloudinaryConfigured
 };

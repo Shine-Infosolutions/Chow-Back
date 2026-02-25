@@ -16,13 +16,17 @@ const asyncHandler = (fn) => (req, res, next) => {
 
 const uploadFiles = async (files) => {
   const uploads = {};
-  if (files?.images) {
-    uploads.images = await Promise.all(
-      files.images.map(file => uploadToCloudinary(file.buffer, 'image'))
-    );
-  }
-  if (files?.video?.[0]) {
-    uploads.video = await uploadToCloudinary(files.video[0].buffer, 'video');
+  try {
+    if (files?.images) {
+      uploads.images = await Promise.all(
+        files.images.map(file => uploadToCloudinary(file.buffer, 'image'))
+      );
+    }
+    if (files?.video?.[0]) {
+      uploads.video = await uploadToCloudinary(files.video[0].buffer, 'video');
+    }
+  } catch (error) {
+    console.warn('File upload skipped:', error.message);
   }
   return uploads;
 };

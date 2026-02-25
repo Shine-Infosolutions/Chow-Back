@@ -184,6 +184,5 @@ orderSchema.pre('save', function(next) {
 // Indexes for better query performance
 orderSchema.index({ userId: 1, createdAt: -1 });
 orderSchema.index({ status: 1, createdAt: -1 });
-orderSchema.index({ waybill: 1 });
 
 module.exports = mongoose.model('Order', orderSchema);

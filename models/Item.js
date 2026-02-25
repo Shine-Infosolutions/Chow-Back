@@ -68,6 +68,16 @@ const itemSchema = new mongoose.Schema({
     min: 1,
     default: 100 // Default weight in grams
   },
+  uom: {
+    type: String,
+    enum: ['kg', 'gm', 'ltr', 'ml', 'pcs', 'box', 'pack'],
+    default: 'gm'
+  },
+  piecesPerUnit: {
+    type: Number,
+    min: 1,
+    default: 1 // For items sold by pieces (e.g., 12 pieces per box)
+  },
   status: {
     type: String,
     enum: ['active', 'inactive'],
