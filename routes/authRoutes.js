@@ -5,6 +5,7 @@ const { verifyToken, verifyAdmin } = require('../middleware');
 
 // Public Routes
 router.post('/register', authController.userRegister);
+router.post('/admin/register', authController.adminRegister);
 router.post('/login', authController.userLogin);
 router.post('/admin/login', authController.adminLogin);
 

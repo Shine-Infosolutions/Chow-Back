@@ -42,6 +42,34 @@ exports.userRegister = async (req, res) => {
   }
 };
 
+// Admin Registration
+exports.adminRegister = async (req, res) => {
+  try {
+    const { name, email, password, phone } = req.body;
+    
+    const validationError = validateRequiredFields(['name', 'email', 'password', 'phone'], req.body);
+    if (validationError) {
+      return res.status(400).json({ success: false, message: validationError });
+    }
+
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({ success: false, message: 'Email already exists' });
+    }
+
+    const admin = await new User({ name, email, password, phone, role: 'admin' }).save();
+    const token = generateToken(admin._id, admin.role);
+    
+    res.status(201).json({ 
+      success: true, 
+      user: sanitizeUser(admin), 
+      token 
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
 // User Login
 exports.userLogin = async (req, res) => {
   try {
