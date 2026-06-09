@@ -7,16 +7,24 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 // CORS Configuration
-app.use(cors({
-  origin: ["https://chow-front.vercel.app", "http://localhost:3000", "http://localhost:5173"],
-  credentials: true,
-  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"]
-}));
+app.use(
+  cors({
+    origin: [
+      "https://chow-front-five.vercel.app",
+      "https://www.chowdhrysweethouse.in",
+      "https://chowdhrysweethouse.in",
+      "http://localhost:3000",
+      "http://localhost:5173",
+    ],
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  }),
+);
 
 // Middleware
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
 // Favicon handler
 app.get("/favicon.ico", (req, res) => res.status(204).end());
@@ -37,17 +45,17 @@ const routes = [
   ["/api/payment", require("./routes/paymentRoutes")],
   ["/api/sweet-deals", require("./routes/sweetDealRoutes")],
   ["/api/delhivery", require("./routes/delhiveryRoutes")],
-  ["/api/delivery", require("./routes/deliveryRoutes")]
+  ["/api/delivery", require("./routes/deliveryRoutes")],
 ];
 
 routes.forEach(([path, router]) => app.use(path, router));
 
 // Health check
 app.get("/", (req, res) => {
-  res.json({ 
+  res.json({
     message: "Chowdhry Backend API running",
     status: "healthy",
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
   });
 });
 
@@ -59,9 +67,12 @@ app.use("*", (req, res) => {
 // Global error handler
 app.use((err, req, res, next) => {
   console.error("Error:", err.message);
-  res.status(err.status || 500).json({ 
+  res.status(err.status || 500).json({
     success: false,
-    error: process.env.NODE_ENV === 'production' ? 'Internal server error' : err.message
+    error:
+      process.env.NODE_ENV === "production"
+        ? "Internal server error"
+        : err.message,
   });
 });
 
@@ -71,16 +82,16 @@ const gracefulShutdown = (signal) => {
   process.exit(0);
 };
 
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled Rejection:', reason?.message || reason);
-  if (process.env.NODE_ENV !== 'production') process.exit(1);
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("Unhandled Rejection:", reason?.message || reason);
+  if (process.env.NODE_ENV !== "production") process.exit(1);
 });
 
-process.on('uncaughtException', (error) => {
-  console.error('Uncaught Exception:', error?.message || error);
+process.on("uncaughtException", (error) => {
+  console.error("Uncaught Exception:", error?.message || error);
   process.exit(1);
 });
 
@@ -89,7 +100,7 @@ connectDB()
   .then(() => {
     app.listen(PORT, () => {
       console.log(`🚀 Server running on port ${PORT}`);
-      console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
+      console.log(`📍 Environment: ${process.env.NODE_ENV || "development"}`);
     });
   })
   .catch((err) => {
