@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const orderController = require('../controllers/orderController');
+const { verifyToken, verifyAdmin } = require('../middleware');
 
 // Get all orders
 router.get('/', orderController.getAllOrders);
@@ -27,6 +28,17 @@ router.patch('/:id/delivery-status', orderController.updateDeliveryStatus);
 
 // Update general status (for SELF delivery orders only)
 router.patch('/:id/status', orderController.updateStatus);
+
+// Customer: update contact number(s) on their own order
+router.patch('/:id/contact', verifyToken, orderController.updateOrderContact);
+
+// Admin: set the delivery date after accepting an order
+router.patch('/:id/delivery-date', verifyToken, verifyAdmin, orderController.updateDeliveryDate);
+
+// Admin: cancel order (restock + refund state), mark delayed/reschedule, internal notes
+router.patch('/:id/cancel', verifyToken, verifyAdmin, orderController.cancelOrder);
+router.patch('/:id/delay', verifyToken, verifyAdmin, orderController.markDelayed);
+router.patch('/:id/notes', verifyToken, verifyAdmin, orderController.updateAdminNotes);
 
 // Bulk status update
 router.patch('/bulk/status', orderController.bulkUpdateStatus);

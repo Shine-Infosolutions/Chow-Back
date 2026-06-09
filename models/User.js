@@ -31,6 +31,7 @@ const userSchema = new mongoose.Schema({
     postcode: { type: String, required: true },
     email: { type: String, required: true },
     phone: { type: String, required: true },
+    altPhone: { type: String },
     orderNotes: { type: String },
     isDefault: { type: Boolean, default: false }
   }],

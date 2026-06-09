@@ -48,10 +48,19 @@ const orderSchema = new mongoose.Schema({
     required: true,
     min: 0
   },
+  platformFee: {
+    type: Number,
+    default: 0
+  },
   currency: {
     type: String,
     default: 'INR'
   },
+  // Customer contact for this order (editable post-order; falls back to address phone if empty)
+  contactPhone: { type: String },
+  altPhone: { type: String },
+  // Delivery date is chosen by admin after accepting the order (no auto ETA)
+  deliveryDate: { type: Date },
   status: {
     type: String,
     enum: ['pending', 'confirmed', 'shipped', 'delivered', 'cancelled', 'failed'],
@@ -143,7 +152,14 @@ const orderSchema = new mongoose.Schema({
   }],
   confirmedAt: Date,
   cancelledAt: Date,
-  rtoHandled: { type: Boolean, default: false }
+  rtoHandled: { type: Boolean, default: false },
+  // ----- Business-owner order management -----
+  cancelReason: String,
+  refundStatus: { type: String, enum: ['none', 'pending', 'processed'], default: 'none' },
+  stockRestored: { type: Boolean, default: false },
+  isDelayed: { type: Boolean, default: false },
+  delayReason: String,
+  adminNotes: String
 }, {
   timestamps: true
 });

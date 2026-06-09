@@ -75,7 +75,10 @@ exports.createOrder = async (req, res) => {
     );
 
     const gstAmount = subtotal * 0.05; // GST only on items
-    const finalAmountInRupees = Math.round((subtotal + gstAmount + shippingTotal) * 100) / 100;
+    // Platform fee to cover payment-gateway (Razorpay) charges
+    const PLATFORM_FEE_PERCENT = Number(process.env.PLATFORM_FEE_PERCENT) || 2;
+    const platformFee = Math.ceil((subtotal + gstAmount + shippingTotal) * PLATFORM_FEE_PERCENT / 100);
+    const finalAmountInRupees = Math.round((subtotal + gstAmount + shippingTotal + platformFee) * 100) / 100;
     const finalAmountInPaise = Math.round(finalAmountInRupees * 100);
 
     // Validation: Ensure we're not storing paisa as rupees
@@ -92,6 +95,7 @@ exports.createOrder = async (req, res) => {
     const orderDoc = await Order.create({
       ...orderData,
       totalAmount: finalAmountInRupees,
+      platformFee,
       shipping: {
         provider: deliveryProvider,
         total: shippingTotal,

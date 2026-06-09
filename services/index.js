@@ -330,22 +330,41 @@ class DeliveryService {
       return { success: false, error: 'Valid 6-digit pincode required' };
     }
 
-    return isGorakhpurPincode(pincode) 
-      ? await this._getSelfDeliveryPricing(pincode, weight)
-      : await this._getDelhiveryPricing(pincode, weight);
+    // Gorakhpur-only launch: Delhivery is disabled. Non-Gorakhpur pincodes are
+    // not serviceable. (_getDelhiveryPricing is kept dormant for re-enabling later.)
+    if (!isGorakhpurPincode(pincode)) {
+      return {
+        success: false,
+        serviceable: false,
+        message: 'We currently deliver only within Gorakhpur.',
+        error: 'We currently deliver only within Gorakhpur.'
+      };
+    }
+
+    return await this._getSelfDeliveryPricing(pincode, weight);
   }
 
   async _getSelfDeliveryPricing(pincode, weight) {
     const distance = await this.distanceService.calculateDistance(this.basePincode, pincode) || 5;
-    const baseRate = 30;
-    const distanceRate = Math.max(0, (distance - 2) * 5);
-    const weightRate = Math.max(0, (Math.ceil(weight / 1000) - 1) * 10);
-    const charge = Math.round(baseRate + distanceRate + weightRate);
+    const FREE_RADIUS_KM = 5;
+
+    // Free delivery within 5 km of the store; charged beyond that.
+    let charge, breakdown;
+    if (distance <= FREE_RADIUS_KM) {
+      charge = 0;
+      breakdown = { baseRate: 0, distanceRate: 0, weightRate: 0, total: 0, freeWithinKm: FREE_RADIUS_KM };
+    } else {
+      const baseRate = 30;
+      const distanceRate = Math.max(0, (distance - FREE_RADIUS_KM) * 5);
+      const weightRate = Math.max(0, (Math.ceil(weight / 1000) - 1) * 10);
+      charge = Math.round(baseRate + distanceRate + weightRate);
+      breakdown = { baseRate, distanceRate, weightRate, total: charge };
+    }
 
     return {
       success: true, serviceable: true, provider: 'self', displayName: 'Local Delivery',
-      charge, distance, eta: '1-2 hours',
-      breakdown: { baseRate, distanceRate, weightRate, total: charge }
+      charge, distance, freeWithinKm: FREE_RADIUS_KM,
+      breakdown
     };
   }
 
