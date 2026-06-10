@@ -12,11 +12,17 @@ router.get('/failed', orderController.getFailedOrders);
 // Get orders by user ID
 router.get('/my/:userId', orderController.getMyOrders);
 
+// Invoice (public HTML — shareable link, printable / downloadable)
+router.get('/:id/invoice', orderController.getInvoice);
+
 // Get order by ID
 router.get('/:id', orderController.getOrderById);
 
 // Get admin permissions for order
 router.get('/:id/permissions', orderController.getOrderPermissions);
+
+// Admin: send / resend the order-confirmation email to the customer
+router.post('/:id/send-confirmation', verifyToken, verifyAdmin, orderController.sendConfirmation);
 
 
 

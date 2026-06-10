@@ -51,6 +51,16 @@ const processPaymentConfirmation = async (order, paymentData) => {
 
     await order.save();
 
+    // Send the order-confirmation email (best-effort; never blocks payment).
+    try {
+      const { sendOrderConfirmationEmail } = require('../services/mailer');
+      sendOrderConfirmationEmail(order._id).catch((e) =>
+        console.error('Order confirmation email error:', e.message)
+      );
+    } catch (e) {
+      console.error('Mailer load error:', e.message);
+    }
+
     const shouldCreateShipment = deliveryService.shouldCreateDelhiveryShipment(order);
     console.log(`Payment confirmed for ${shouldCreateShipment ? 'Delhivery' : 'local delivery'} order:`, order._id);
 

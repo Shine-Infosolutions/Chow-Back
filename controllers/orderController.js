@@ -552,3 +552,43 @@ exports.updateDeliveryDate = async (req, res) => {
   }
 };
 
+/* -------------------- INVOICE (printable / shareable HTML) -------------------- */
+exports.getInvoice = async (req, res) => {
+  try {
+    const { renderInvoiceHtml } = require('../utils/invoice');
+    const order = await Order.findById(req.params.id)
+      .populate('userId', 'name email phone address')
+      .populate('items.itemId', 'name price');
+
+    if (!order) {
+      return res.status(404).send('<h1 style="font-family:sans-serif;text-align:center;margin-top:40px;">Invoice not found</h1>');
+    }
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(renderInvoiceHtml(order));
+  } catch (err) {
+    res.status(500).send('Failed to generate invoice');
+  }
+};
+
+/* -------------------- SEND / RESEND ORDER CONFIRMATION EMAIL (admin) -------------------- */
+exports.sendConfirmation = async (req, res) => {
+  try {
+    const { sendOrderConfirmationEmail } = require('../services/mailer');
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    const result = await sendOrderConfirmationEmail(req.params.id, { baseUrl });
+
+    if (result.success) {
+      return res.json({ success: true, message: 'Confirmation email sent.' });
+    }
+    return res.status(400).json({
+      success: false,
+      message: result.skipped
+        ? 'Email is not configured on the server.'
+        : result.error || 'Failed to send email.',
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+

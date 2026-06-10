@@ -1,5 +1,37 @@
 const User = require('../models/User');
 
+// Admin: list / search customers (paginated)
+exports.getUsers = async (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(100, parseInt(req.query.limit) || 12);
+    const search = (req.query.search || '').trim();
+
+    const query = {};
+    if (search) {
+      const rx = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      query.$or = [{ name: rx }, { email: rx }, { phone: rx }];
+    }
+
+    const [users, total] = await Promise.all([
+      User.find(query)
+        .select('-password')
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit),
+      User.countDocuments(query),
+    ]);
+
+    res.json({
+      success: true,
+      users,
+      pagination: { page, limit, total, pages: Math.max(1, Math.ceil(total / limit)) },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
 // Get user addresses
 exports.getUserAddresses = async (req, res) => {
   try {
