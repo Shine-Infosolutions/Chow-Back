@@ -11,6 +11,18 @@ const SHOP = {
 };
 const BRAND = '#d80a4e';
 
+// Logo is served from the storefront's public folder. Override with LOGO_URL if needed.
+const LOGO_URL =
+  process.env.LOGO_URL ||
+  `${(process.env.FRONTEND_URL || 'https://chowdhrysweethouse.in').replace(/\/+$/, '')}/logo.png`;
+
+// White chip wrapping the logo so it stays legible on the maroon header. Hidden if the
+// image fails to load (text wordmark beside it remains the fallback).
+const logoChip = (height = 44) => `
+  <span style="background:#fff;border-radius:12px;padding:7px 11px;display:inline-flex;align-items:center;box-shadow:0 2px 8px rgba(0,0,0,.12);">
+    <img src="${LOGO_URL}" alt="${SHOP.name}" style="height:${height}px;width:auto;display:block;" onerror="this.parentNode.style.display='none'"/>
+  </span>`;
+
 const rupee = (n) => `₹${Number(n || 0).toFixed(2)}`;
 
 const fmtDate = (d) => {
@@ -102,22 +114,36 @@ const renderInvoiceHtml = (order) => {
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Invoice #${d.shortId} · ${SHOP.name}</title>
 <style>
-  @media print { .no-print { display:none !important; } body { background:#fff; } }
+  *, *::before, *::after { box-sizing:border-box; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  html, body { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
   body { font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; background:#f7efe9; color:#1f2937; margin:0; padding:24px; }
   .sheet { max-width:760px; margin:0 auto; background:#fff; border-radius:16px; overflow:hidden; box-shadow:0 10px 40px rgba(0,0,0,.06); }
-  .head { background:linear-gradient(135deg, ${BRAND}, #8b1a3a); color:#fff; padding:28px 32px; display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px; }
+  /* Solid colour first as a fallback, then the gradient — both print thanks to color-adjust:exact. */
+  .head { background:#a01142; background:linear-gradient(135deg, ${BRAND}, #8b1a3a); color:#fff; padding:28px 32px; display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:16px; }
+  .head * { color:#fff; }
+  .body { padding:24px 32px; }
   .muted { color:#6b7280; font-size:13px; }
   table { width:100%; border-collapse:collapse; }
   th { text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:#9ca3af; padding:8px; border-bottom:1px solid #eee; }
+  td { font-size:14px; }
   .btn { display:inline-block; background:${BRAND}; color:#fff; text-decoration:none; padding:10px 20px; border-radius:10px; font-weight:600; border:none; cursor:pointer; font-size:14px; }
+  @media print {
+    @page { size:A4; margin:12mm; }
+    html, body { background:#fff !important; padding:0; margin:0; }
+    .sheet { box-shadow:none; border-radius:0; max-width:100%; }
+    .no-print { display:none !important; }
+  }
 </style></head>
 <body>
   <div class="sheet">
     <div class="head">
-      <div>
-        <div style="font-size:22px;font-weight:800;">${SHOP.name}</div>
-        <div style="opacity:.85;font-size:13px;margin-top:4px;max-width:320px;">${SHOP.address}</div>
-        <div style="opacity:.85;font-size:13px;">${SHOP.phone} · ${SHOP.site}</div>
+      <div style="display:flex;align-items:center;gap:14px;">
+        ${logoChip(46)}
+        <div>
+          <div style="font-size:22px;font-weight:800;">${SHOP.name}</div>
+          <div style="opacity:.85;font-size:13px;margin-top:4px;max-width:320px;">${SHOP.address}</div>
+          <div style="opacity:.85;font-size:13px;">${SHOP.phone} · ${SHOP.site}</div>
+        </div>
       </div>
       <div style="text-align:right;">
         <div style="font-size:13px;opacity:.85;">INVOICE</div>
@@ -162,6 +188,7 @@ const renderOrderEmailHtml = (order, { invoiceUrl, trackUrl } = {}) => {
   <div style="max-width:560px;margin:0 auto;padding:24px;">
     <div style="background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 8px 30px rgba(0,0,0,.06);">
       <div style="background:linear-gradient(135deg,${BRAND},#8b1a3a);color:#fff;padding:28px;text-align:center;">
+        <div style="margin-bottom:12px;">${logoChip(40)}</div>
         <div style="font-size:20px;font-weight:800;">${SHOP.name}</div>
         <div style="font-size:15px;margin-top:8px;">✅ Order Confirmed!</div>
       </div>
