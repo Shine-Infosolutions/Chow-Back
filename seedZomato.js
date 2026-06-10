@@ -266,7 +266,7 @@ async function run() {
 
   console.log('\n──────────────────────────────────────────');
   console.log(' Zomato catalog seed complete.');
-  console.log(' Remember to upload the real product photos via Admin → Products.');
+  console.log(' Photos load from Chow-Front/public/menuphotos/ — deploy the frontend to see them.');
   console.log('──────────────────────────────────────────');
 
   await mongoose.disconnect();
