@@ -6,6 +6,24 @@ const { deriveOrderStatus, updateOrderSignals, getUpdatePermissions } = require(
 
 const TAX_RATE = 0.05;
 
+// Best-effort customer push for an order change. Never throws / blocks the response.
+const pushOrderUpdate = (order, statusKey, extra) => {
+  try {
+    require('../services/push').notifyOrderUpdate(order, statusKey, extra);
+  } catch (e) {
+    console.error('Order push notify error:', e.message);
+  }
+};
+
+// Map a SELF delivery status to friendly customer copy (null = no notification).
+const DELIVERY_STATUS_PUSH_KEY = {
+  IN_TRANSIT: 'shipped',
+  OUT_FOR_DELIVERY: 'out_for_delivery',
+  DELIVERED: 'delivered',
+  PRE_PICKUP_CANCEL: 'cancelled',
+  RTO: 'cancelled'
+};
+
 const QUERIES = {
   SUCCESS: {
     status: { $in: ['pending', 'confirmed', 'shipped', 'delivered', 'cancelled'] }
@@ -231,7 +249,10 @@ exports.updateDeliveryStatus = async (req, res) => {
       updateFields,
       { new: true, runValidators: true }
     );
-    
+
+    const dsKey = DELIVERY_STATUS_PUSH_KEY[deliveryStatus];
+    if (dsKey) pushOrderUpdate(order, dsKey);
+
     res.json({ success: true, order: { ...order.toObject(), ...updateFields } });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -282,13 +303,16 @@ exports.updateStatus = async (req, res) => {
     }
 
     const updateFields = updateOrderSignals(order, updates, { source: 'ADMIN' });
-    
+
     await Order.findByIdAndUpdate(
       req.params.id,
       updateFields,
       { new: true, runValidators: true }
     );
-    
+
+    const statusKey = { shipped: 'shipped', delivered: 'delivered', cancelled: 'cancelled', confirmed: 'confirmed' }[status.toLowerCase()];
+    if (statusKey) pushOrderUpdate(order, statusKey);
+
     res.json({ success: true, order: { ...order.toObject(), ...updateFields } });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -466,6 +490,11 @@ exports.cancelOrder = async (req, res) => {
     }
 
     await order.save();
+
+    pushOrderUpdate(order, 'cancelled', {
+      body: `Your order has been cancelled${order.refundStatus !== 'none' ? ' and a refund is being processed' : ''}. (#${String(order._id).slice(-6).toUpperCase()})`
+    });
+
     res.json({
       success: true,
       order: {
@@ -502,6 +531,16 @@ exports.markDelayed = async (req, res) => {
     }
 
     await order.save();
+
+    if (order.isDelayed) {
+      const when = order.deliveryDate
+        ? ` New date: ${new Date(order.deliveryDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}.`
+        : '';
+      pushOrderUpdate(order, 'delayed', {
+        body: `Your order delivery has been rescheduled.${when}${order.delayReason ? ` Reason: ${order.delayReason}.` : ''} (#${String(order._id).slice(-6).toUpperCase()})`
+      });
+    }
+
     res.json({
       success: true,
       order: { _id: order._id, isDelayed: order.isDelayed, delayReason: order.delayReason, deliveryDate: order.deliveryDate },
@@ -546,6 +585,14 @@ exports.updateDeliveryDate = async (req, res) => {
     }
 
     await order.save();
+
+    if (order.deliveryDate) {
+      const dateStr = new Date(order.deliveryDate).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' });
+      pushOrderUpdate(order, 'delivery_date', {
+        body: `Your order is scheduled for delivery on ${dateStr}. (#${String(order._id).slice(-6).toUpperCase()})`
+      });
+    }
+
     res.json({ success: true, deliveryDate: order.deliveryDate });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });

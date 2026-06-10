@@ -61,6 +61,19 @@ const processPaymentConfirmation = async (order, paymentData) => {
       console.error('Mailer load error:', e.message);
     }
 
+    // Push notifications (best-effort): alert the shop of a new order, confirm to the customer.
+    try {
+      const push = require('../services/push');
+      const Order = require('../models/Order');
+      Order.findById(order._id).populate('userId', 'name').then((populated) => {
+        if (!populated) return;
+        push.notifyNewOrder(populated);
+        push.notifyOrderUpdate(populated, 'confirmed');
+      }).catch((e) => console.error('Order push notify error:', e.message));
+    } catch (e) {
+      console.error('Push load error:', e.message);
+    }
+
     const shouldCreateShipment = deliveryService.shouldCreateDelhiveryShipment(order);
     console.log(`Payment confirmed for ${shouldCreateShipment ? 'Delhivery' : 'local delivery'} order:`, order._id);
 
@@ -156,6 +169,14 @@ const createDelhiveryShipment = async (orderId) => {
         shipmentLastError: null
       });
       await order.save();
+
+      // Notify the customer their order has shipped (order.userId is populated above).
+      try {
+        require('../services/push').notifyOrderUpdate(order, 'shipped');
+      } catch (e) {
+        console.error('Shipped push notify error:', e.message);
+      }
+
       return result;
     } else {
       throw new Error(result?.error || 'Shipment creation failed - no result');

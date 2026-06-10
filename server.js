@@ -40,6 +40,7 @@ const routes = [
   ["/api/auth", require("./routes/authRoutes")],
   ["/api/orders", require("./routes/orderRoutes")],
   ["/api/users", require("./routes/userRoutes")],
+  ["/api/push", require("./routes/pushRoutes")],
   ["/api/admin", require("./routes/adminRoutes")],
   ["/api", require("./routes/distanceRoutes")],
   ["/api/payment", require("./routes/paymentRoutes")],
