@@ -7,10 +7,8 @@ const GORAKHPUR_PINCODES = new Set([
 
 const isGorakhpurPincode = (pincode) => GORAKHPUR_PINCODES.has(String(pincode));
 
-const getLocalDeliveryCharge = (totalWeight = 500) => 30; // Flat rate for local delivery
 
 module.exports = {
   GORAKHPUR_PINCODES: Array.from(GORAKHPUR_PINCODES),
-  isGorakhpurPincode,
-  getLocalDeliveryCharge
+  isGorakhpurPincode
 };

@@ -1,220 +1,246 @@
-// Shared invoice/order presentation helpers.
-// Builds normalized invoice data from a (populated) order and renders both a
-// standalone printable HTML invoice and the order-confirmation email body.
+// Invoice / order presentation helpers.
+// getInvoiceData(order) → normalised numbers used by the invoice page and the emails.
+// renderInvoiceHtml(order, brand) → printable Tax Invoice (regular GST) or Bill of Supply
+// (composition / unregistered). `brand` comes from services/settings.brandFromSettings().
+// Every interpolated value is HTML-escaped.
 
-const SHOP = {
-  name: 'Chowdhry Sweet House',
-  address: 'Vijay Chowk, in front of Vijay Talkies, Golghar, Gorakhpur, UP 273001',
-  phone: '+91 7525025100',
-  email: process.env.EMAIL_FROM || process.env.SMTP_USER || 'orders@chowdhrysweethouse.in',
-  site: 'chowdhrysweethouse.in',
-};
-const BRAND = '#d80a4e';
+const { escapeHtml: e, round2 } = require('./http');
+const { canonicalState } = require('./addressValidation');
 
-// Logo is served from the storefront's public folder. Override with LOGO_URL if needed.
-const LOGO_URL =
-  process.env.LOGO_URL ||
-  `${(process.env.FRONTEND_URL || 'https://chowdhrysweethouse.in').replace(/\/+$/, '')}/logo.png`;
+const PRIMARY = '#d80a4e';
 
-// White chip wrapping the logo so it stays legible on the maroon header. Hidden if the
-// image fails to load (text wordmark beside it remains the fallback).
-const logoChip = (height = 44) => `
-  <span style="background:#fff;border-radius:12px;padding:7px 11px;display:inline-flex;align-items:center;box-shadow:0 2px 8px rgba(0,0,0,.12);">
-    <img src="${LOGO_URL}" alt="${SHOP.name}" style="height:${height}px;width:auto;display:block;" onerror="this.parentNode.style.display='none'"/>
-  </span>`;
+const LOGO_URL = () => process.env.LOGO_URL || `${require('../config/site').frontendUrl()}/logo.png`;
 
 const rupee = (n) => `₹${Number(n || 0).toFixed(2)}`;
 
-const fmtDate = (d) => {
+const fmtDate = (d, withTime = true) => {
+  if (!d) return '';
   try {
     return new Date(d).toLocaleString('en-IN', {
-      day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+      timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric',
+      ...(withTime ? { hour: '2-digit', minute: '2-digit' } : {}),
     });
   } catch {
-    return String(d || '');
+    return String(d);
   }
 };
 
-// Find the delivery address subdoc on the populated user.
+// Prefer the address snapshot captured at checkout; fall back to the user's saved address (old orders).
 const getDeliveryAddress = (order) => {
+  const snap = order?.shippingAddress;
+  if (snap && (snap.street || snap.postcode)) return snap;
   const addresses = order?.userId?.address || [];
   return addresses.find((a) => String(a._id) === String(order.addressId)) || addresses[0] || {};
 };
 
+// Tax snapshot of an order. Legacy orders (no snapshot) were charged 5% GST on top.
+const taxModelOf = (order) => ({
+  scheme: order.gstScheme || 'regular',
+  inclusive: order.pricesIncludeGst === true,
+});
+
 const getInvoiceData = (order) => {
   const addr = getDeliveryAddress(order);
+  const { scheme, inclusive } = taxModelOf(order);
+  const taxable = scheme === 'regular';
+
   const items = (order.items || []).map((it) => {
-    const name = it.itemId?.name || 'Item';
+    const name = it.itemId?.name || it.name || 'Item';
     const qty = it.quantity || 0;
     const price = it.price || 0;
-    return { name, qty, price, total: price * qty };
+    const total = round2(price * qty);
+    const rate = taxable ? (Number.isFinite(it.gstRate) ? it.gstRate : 5) : 0;
+    const tax = taxable ? round2(inclusive ? (total * rate) / (100 + rate) : (total * rate) / 100) : 0;
+    const taxableValue = inclusive ? round2(total - tax) : total;
+    return { name, qty, price, total, rate, tax, taxableValue, hsn: it.hsnCode || '' };
   });
-  const subtotal = items.reduce((s, i) => s + i.total, 0);
-  const gst = +(subtotal * 0.05).toFixed(2);
+  const subtotal = round2(items.reduce((s, i) => s + i.total, 0));
+  const computedGst = round2(items.reduce((s, i) => s + i.tax, 0));
+  const gst = taxable ? (Number.isFinite(order.gstAmount) ? order.gstAmount : computedGst) : 0;
   const delivery = order.shipping?.total || 0;
   const platformFee = order.platformFee || 0;
-  const total = order.totalAmount != null ? order.totalAmount : subtotal + gst + delivery + platformFee;
+  const total = order.totalAmount != null ? order.totalAmount : subtotal + (inclusive ? 0 : gst) + delivery + platformFee;
 
-  const customerName =
-    `${addr.firstName || ''} ${addr.lastName || ''}`.trim() || order.userId?.name || 'Customer';
-  const addressLine = [addr.street, addr.apartment, addr.city, addr.state, addr.postcode]
-    .filter(Boolean)
-    .join(', ');
+  const customerName = `${addr.firstName || ''} ${addr.lastName || ''}`.trim() || order.userId?.name || 'Customer';
+  const addressLine = [addr.street, addr.apartment, addr.city, addr.state, addr.postcode].filter(Boolean).join(', ');
 
   return {
     orderId: String(order._id),
     shortId: String(order._id).slice(-8).toUpperCase(),
+    invoiceNumber: order.invoiceNumber || null,
+    invoiceDate: order.invoiceDate || order.paidAt || order.confirmedAt || null,
     date: order.createdAt,
     status: order.status,
     paymentStatus: order.paymentStatus,
     deliveryDate: order.deliveryDate,
     customer: {
+      firstName: addr.firstName || (order.userId?.name ? String(order.userId.name).trim().split(/\s+/)[0] : ''),
       name: customerName,
       email: addr.email || order.userId?.email || '',
       phone: order.contactPhone || addr.phone || order.userId?.phone || '',
       address: addressLine,
+      state: canonicalState(addr.state) || addr.state || '',
     },
     items,
     subtotal,
     gst,
+    gstScheme: scheme,
+    gstIncluded: taxable && inclusive,
+    gstLabel: !taxable ? null : inclusive ? 'GST (included)' : 'GST',
     delivery,
     platformFee,
     total,
+    refundedAmount: order.refundedAmount || 0,
+    refunds: order.refunds || [],
   };
 };
 
-const itemRows = (items) =>
-  items
-    .map(
-      (i, idx) => `
-      <tr>
-        <td style="padding:10px 8px;border-bottom:1px solid #f0e6d8;">${idx + 1}</td>
-        <td style="padding:10px 8px;border-bottom:1px solid #f0e6d8;">${i.name}</td>
-        <td style="padding:10px 8px;border-bottom:1px solid #f0e6d8;text-align:center;">${i.qty}</td>
-        <td style="padding:10px 8px;border-bottom:1px solid #f0e6d8;text-align:right;">${rupee(i.price)}</td>
-        <td style="padding:10px 8px;border-bottom:1px solid #f0e6d8;text-align:right;font-weight:600;">${rupee(i.total)}</td>
-      </tr>`,
-    )
-    .join('');
+// Per-rate GST summary: CGST+SGST when supply is intra-state, else IGST.
+const taxSummary = (d, businessState) => {
+  const intra = Boolean(businessState) && (canonicalState(businessState) || businessState) === d.customer.state;
+  const byRate = new Map();
+  for (const i of d.items) {
+    if (!i.rate) continue;
+    const r = byRate.get(i.rate) || { rate: i.rate, taxableValue: 0, tax: 0 };
+    r.taxableValue = round2(r.taxableValue + i.taxableValue);
+    r.tax = round2(r.tax + i.tax);
+    byRate.set(i.rate, r);
+  }
+  const rows = [...byRate.values()].map((r) => (intra
+    ? { ...r, cgst: round2(r.tax / 2), sgst: round2(r.tax - round2(r.tax / 2)), igst: 0 }
+    : { ...r, cgst: 0, sgst: 0, igst: r.tax }));
+  return { intra, rows };
+};
 
-const totalsBlock = (d) => `
-  <tr><td colspan="3"></td><td style="padding:6px 8px;text-align:right;color:#6b7280;">Subtotal</td><td style="padding:6px 8px;text-align:right;">${rupee(d.subtotal)}</td></tr>
-  <tr><td colspan="3"></td><td style="padding:6px 8px;text-align:right;color:#6b7280;">GST (5%)</td><td style="padding:6px 8px;text-align:right;">${rupee(d.gst)}</td></tr>
-  <tr><td colspan="3"></td><td style="padding:6px 8px;text-align:right;color:#6b7280;">Delivery</td><td style="padding:6px 8px;text-align:right;">${d.delivery > 0 ? rupee(d.delivery) : 'FREE'}</td></tr>
-  ${d.platformFee > 0 ? `<tr><td colspan="3"></td><td style="padding:6px 8px;text-align:right;color:#6b7280;">Platform fee</td><td style="padding:6px 8px;text-align:right;">${rupee(d.platformFee)}</td></tr>` : ''}
-  <tr><td colspan="3"></td><td style="padding:10px 8px;text-align:right;font-weight:700;border-top:2px solid ${BRAND};">Total</td><td style="padding:10px 8px;text-align:right;font-weight:700;color:${BRAND};border-top:2px solid ${BRAND};">${rupee(d.total)}</td></tr>
-`;
+const td = (html, extra = '') => `<td style="padding:8px;border-bottom:1px solid #f0e6d8;${extra}">${html}</td>`;
 
-// Full standalone, printable invoice page (also the shareable link target).
-const renderInvoiceHtml = (order) => {
+const renderInvoiceHtml = (order, brand = {}) => {
   const d = getInvoiceData(order);
+  const b = {
+    name: brand.name || 'Chowdhry Sweet House',
+    legalName: brand.legalName || brand.name || 'Chowdhry Sweet House',
+    address: brand.address || 'Gorakhpur, Uttar Pradesh',
+    state: brand.state || 'Uttar Pradesh',
+    phoneDisplay: brand.phoneDisplay || '',
+    email: brand.email || '',
+    gstin: brand.gstin || '',
+    fssaiLicense: brand.fssaiLicense || '',
+    grievance: brand.grievance || {},
+  };
+  const isTaxInvoice = d.gstScheme === 'regular';
+  const docTitle = isTaxInvoice ? 'TAX INVOICE' : 'BILL OF SUPPLY';
+  const declaration = d.gstScheme === 'composition'
+    ? 'Composition taxable person, not eligible to collect tax on supplies.'
+    : d.gstScheme === 'unregistered'
+      ? 'Supplier is not registered under GST; no GST has been charged.'
+      : '';
+  const ts = isTaxInvoice ? taxSummary(d, b.state) : { rows: [], intra: true };
+
+  const itemRows = d.items.map((i, idx) => `<tr>
+    ${td(idx + 1)}
+    ${td(e(i.name))}
+    ${td(e(i.hsn || '—'), 'color:#6b7280;')}
+    ${td(e(i.qty), 'text-align:center;')}
+    ${td(rupee(i.price), 'text-align:right;')}
+    ${isTaxInvoice ? td(`${e(i.rate)}%`, 'text-align:center;color:#6b7280;') : ''}
+    ${td(rupee(i.total), 'text-align:right;font-weight:600;')}
+  </tr>`).join('');
+  const cols = isTaxInvoice ? 6 : 5;
+  const totalRow = (label, value, strong = false) => `<tr><td colspan="${cols}" style="padding:6px 8px;text-align:right;${strong ? `font-weight:700;border-top:2px solid ${PRIMARY};` : 'color:#6b7280;'}">${e(label)}</td><td style="padding:6px 8px;text-align:right;${strong ? `font-weight:700;color:${PRIMARY};border-top:2px solid ${PRIMARY};` : ''}">${value}</td></tr>`;
+
+  const taxTable = isTaxInvoice && ts.rows.length ? `
+    <table style="margin-top:18px;">
+      <thead><tr><th>GST rate</th><th style="text-align:right;">Taxable value</th>${ts.intra ? '<th style="text-align:right;">CGST</th><th style="text-align:right;">SGST</th>' : '<th style="text-align:right;">IGST</th>'}<th style="text-align:right;">Total tax</th></tr></thead>
+      <tbody>${ts.rows.map((r) => `<tr>
+        ${td(`${e(r.rate)}%`)}${td(rupee(r.taxableValue), 'text-align:right;')}
+        ${ts.intra ? td(`${rupee(r.cgst)} <span style="color:#9ca3af;">(${e(r.rate / 2)}%)</span>`, 'text-align:right;') + td(`${rupee(r.sgst)} <span style="color:#9ca3af;">(${e(r.rate / 2)}%)</span>`, 'text-align:right;') : td(`${rupee(r.igst)} <span style="color:#9ca3af;">(${e(r.rate)}%)</span>`, 'text-align:right;')}
+        ${td(rupee(r.tax), 'text-align:right;')}
+      </tr>`).join('')}</tbody>
+    </table>` : '';
+
+  const creditNotes = (d.refunds || []).filter((r) => r.status === 'processed');
+  const g = b.grievance;
+  const grievanceLine = [g.name, g.designation, g.email, g.phone].filter(Boolean).map(e).join(' · ');
+
   return `<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Invoice #${d.shortId} · ${SHOP.name}</title>
+<meta name="robots" content="noindex"/>
+<title>${e(docTitle === 'TAX INVOICE' ? 'Tax Invoice' : 'Bill of Supply')} ${e(d.invoiceNumber || '#' + d.shortId)} · ${e(b.name)}</title>
 <style>
   *, *::before, *::after { box-sizing:border-box; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
-  html, body { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
   body { font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; background:#f7efe9; color:#1f2937; margin:0; padding:24px; }
-  .sheet { max-width:760px; margin:0 auto; background:#fff; border-radius:16px; overflow:hidden; box-shadow:0 10px 40px rgba(0,0,0,.06); }
-  /* Solid colour first as a fallback, then the gradient — both print thanks to color-adjust:exact. */
-  .head { background:#a01142; background:linear-gradient(135deg, ${BRAND}, #8b1a3a); color:#fff; padding:28px 32px; display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:16px; }
+  .sheet { max-width:820px; margin:0 auto; background:#fff; border-radius:16px; overflow:hidden; box-shadow:0 10px 40px rgba(0,0,0,.06); }
+  .head { background:#a01142; background:linear-gradient(135deg, ${PRIMARY}, #8b1a3a); color:#fff; padding:24px 32px; display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:16px; }
   .head * { color:#fff; }
-  .body { padding:24px 32px; }
   .muted { color:#6b7280; font-size:13px; }
   table { width:100%; border-collapse:collapse; }
   th { text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:#9ca3af; padding:8px; border-bottom:1px solid #eee; }
   td { font-size:14px; }
-  .btn { display:inline-block; background:${BRAND}; color:#fff; text-decoration:none; padding:10px 20px; border-radius:10px; font-weight:600; border:none; cursor:pointer; font-size:14px; }
-  @media print {
-    @page { size:A4; margin:12mm; }
-    html, body { background:#fff !important; padding:0; margin:0; }
-    .sheet { box-shadow:none; border-radius:0; max-width:100%; }
-    .no-print { display:none !important; }
-  }
+  .btn { display:inline-block; background:${PRIMARY}; color:#fff; text-decoration:none; padding:10px 20px; border-radius:10px; font-weight:600; border:none; cursor:pointer; font-size:14px; }
+  @media print { @page { size:A4; margin:12mm; } body { background:#fff !important; padding:0; } .sheet { box-shadow:none; border-radius:0; max-width:100%; } .no-print { display:none !important; } }
 </style></head>
 <body>
   <div class="sheet">
     <div class="head">
       <div style="display:flex;align-items:center;gap:14px;">
-        ${logoChip(46)}
+        <span style="background:#fff;border-radius:12px;padding:7px 11px;display:inline-flex;"><img src="${e(LOGO_URL())}" alt="${e(b.name)}" width="92" height="46" style="height:46px;width:auto;display:block;"/></span>
         <div>
-          <div style="font-size:22px;font-weight:800;">${SHOP.name}</div>
-          <div style="opacity:.85;font-size:13px;margin-top:4px;max-width:320px;">${SHOP.address}</div>
-          <div style="opacity:.85;font-size:13px;">${SHOP.phone} · ${SHOP.site}</div>
+          <div style="font-size:21px;font-weight:800;">${e(b.legalName)}</div>
+          ${b.legalName !== b.name ? `<div style="font-size:13px;opacity:.9;">${e(b.name)}</div>` : ''}
+          <div style="opacity:.85;font-size:12px;margin-top:4px;max-width:360px;">${e(b.address)}</div>
+          <div style="opacity:.85;font-size:12px;">${[b.phoneDisplay, b.email].filter(Boolean).map(e).join(' · ')}</div>
+          <div style="opacity:.85;font-size:12px;">${b.gstin ? `GSTIN: ${e(b.gstin)}` : ''}${b.gstin && b.fssaiLicense ? ' · ' : ''}${b.fssaiLicense ? `FSSAI Lic. No.: ${e(b.fssaiLicense)}` : ''}</div>
         </div>
       </div>
       <div style="text-align:right;">
-        <div style="font-size:13px;opacity:.85;">INVOICE</div>
-        <div style="font-size:20px;font-weight:700;">#${d.shortId}</div>
-        <div style="font-size:12px;opacity:.85;margin-top:4px;">${fmtDate(d.date)}</div>
+        <div style="font-size:13px;letter-spacing:.08em;font-weight:700;">${e(docTitle)}</div>
+        <div style="font-size:17px;font-weight:700;margin-top:4px;">${d.invoiceNumber ? e(d.invoiceNumber) : 'Not yet issued (unpaid)'}</div>
+        <div style="font-size:12px;opacity:.85;margin-top:4px;">${d.invoiceDate ? `Date: ${e(fmtDate(d.invoiceDate, false))}` : ''}</div>
+        <div style="font-size:12px;opacity:.85;">Order #${e(d.shortId)} · ${e(fmtDate(d.date))}</div>
       </div>
     </div>
 
-    <div style="padding:24px 32px;">
-      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:16px;margin-bottom:20px;">
+    <div style="padding:22px 32px;">
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:16px;margin-bottom:18px;">
         <div>
-          <div class="muted" style="text-transform:uppercase;font-size:11px;letter-spacing:.05em;">Billed to</div>
-          <div style="font-weight:600;margin-top:4px;">${d.customer.name}</div>
-          <div class="muted">${d.customer.address || ''}</div>
-          <div class="muted">${d.customer.phone || ''}${d.customer.email ? ' · ' + d.customer.email : ''}</div>
+          <div class="muted" style="text-transform:uppercase;font-size:11px;letter-spacing:.05em;">Billed / shipped to</div>
+          <div style="font-weight:600;margin-top:4px;">${e(d.customer.name)}</div>
+          <div class="muted">${e(d.customer.address || '')}</div>
+          <div class="muted">${e(d.customer.phone || '')}${d.customer.email ? ' · ' + e(d.customer.email) : ''}</div>
         </div>
         <div style="text-align:right;">
-          <div class="muted" style="text-transform:uppercase;font-size:11px;letter-spacing:.05em;">Payment</div>
-          <div style="font-weight:600;margin-top:4px;text-transform:capitalize;">${d.paymentStatus || 'pending'}</div>
-          ${d.deliveryDate ? `<div class="muted">Delivery: ${new Date(d.deliveryDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</div>` : ''}
+          <div class="muted" style="text-transform:uppercase;font-size:11px;letter-spacing:.05em;">Place of supply</div>
+          <div style="font-weight:600;margin-top:4px;">${e(d.customer.state || '—')}</div>
+          <div class="muted" style="margin-top:6px;">Payment: <span style="text-transform:capitalize;">${e(d.paymentStatus || 'pending')}</span> (Prepaid)</div>
+          ${d.deliveryDate ? `<div class="muted">Delivery: ${e(fmtDate(d.deliveryDate, false))}</div>` : ''}
         </div>
       </div>
 
       <table>
-        <thead><tr><th>#</th><th>Item</th><th style="text-align:center;">Qty</th><th style="text-align:right;">Price</th><th style="text-align:right;">Amount</th></tr></thead>
-        <tbody>${itemRows(d.items)}${totalsBlock(d)}</tbody>
+        <thead><tr><th>#</th><th>Item</th><th>HSN</th><th style="text-align:center;">Qty</th><th style="text-align:right;">Rate</th>${isTaxInvoice ? '<th style="text-align:center;">GST</th>' : ''}<th style="text-align:right;">Amount</th></tr></thead>
+        <tbody>
+          ${itemRows}
+          ${totalRow('Subtotal', rupee(d.subtotal))}
+          ${isTaxInvoice ? totalRow(d.gstIncluded ? 'GST included in prices' : 'GST', rupee(d.gst)) : ''}
+          ${totalRow('Delivery', d.delivery > 0 ? rupee(d.delivery) : 'FREE')}
+          ${d.platformFee > 0 ? totalRow('Platform fee', rupee(d.platformFee)) : ''}
+          ${totalRow('Total', rupee(d.total), true)}
+          ${d.refundedAmount > 0 ? totalRow('Refunded', `-${rupee(d.refundedAmount)}`) : ''}
+        </tbody>
       </table>
-
-      <p class="muted" style="margin-top:24px;text-align:center;">Thank you for your order! · Prepaid · This is a computer-generated invoice.</p>
+      ${taxTable}
+      ${declaration ? `<p class="muted" style="margin-top:16px;"><strong>Declaration:</strong> ${e(declaration)}</p>` : ''}
+      ${creditNotes.length ? `<p class="muted" style="margin-top:10px;"><strong>Credit notes:</strong> ${creditNotes.map((r) => `${e(r.creditNoteNumber || 'pending')} (${rupee(r.amount)}${r.arn ? `, ARN ${e(r.arn)}` : ''})`).join('; ')}</p>` : ''}
+      ${grievanceLine ? `<p class="muted" style="margin-top:10px;"><strong>Grievance officer:</strong> ${grievanceLine}</p>` : ''}
+      <p class="muted" style="margin-top:18px;text-align:center;">Thank you for your order! · This is a computer-generated document and does not require a signature.</p>
       <div class="no-print" style="text-align:center;margin-top:8px;">
-        <button class="btn" onclick="window.print()">Download / Print Invoice</button>
+        <button class="btn" onclick="window.print()">Download / Print</button>
       </div>
     </div>
   </div>
 </body></html>`;
 };
 
-// Order-confirmation email body.
-const renderOrderEmailHtml = (order, { invoiceUrl, trackUrl } = {}) => {
-  const d = getInvoiceData(order);
-  return `<!doctype html><html><body style="margin:0;background:#f7efe9;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#1f2937;">
-  <div style="max-width:560px;margin:0 auto;padding:24px;">
-    <div style="background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 8px 30px rgba(0,0,0,.06);">
-      <div style="background:linear-gradient(135deg,${BRAND},#8b1a3a);color:#fff;padding:28px;text-align:center;">
-        <div style="margin-bottom:12px;">${logoChip(40)}</div>
-        <div style="font-size:20px;font-weight:800;">${SHOP.name}</div>
-        <div style="font-size:15px;margin-top:8px;">✅ Order Confirmed!</div>
-      </div>
-      <div style="padding:24px;">
-        <p style="margin:0 0 4px;">Hi ${d.customer.name},</p>
-        <p style="margin:0 0 16px;color:#4b5563;">Thank you for your order. We're preparing your sweets with love. 🍬</p>
-        <div style="background:#fdf6ee;border:1px solid #f0e6d8;border-radius:12px;padding:16px;">
-          <div style="display:flex;justify-content:space-between;"><span style="color:#6b7280;">Order ID</span><b>#${d.shortId}</b></div>
-          <div style="display:flex;justify-content:space-between;margin-top:8px;border-top:1px dashed #e7d8c4;padding-top:8px;"><span style="color:#6b7280;">Total Paid</span><b style="color:${BRAND};">${rupee(d.total)}</b></div>
-        </div>
-        <table style="width:100%;border-collapse:collapse;margin-top:16px;">
-          ${d.items
-            .map(
-              (i) =>
-                `<tr><td style="padding:6px 0;color:#374151;">${i.name} × ${i.qty}</td><td style="padding:6px 0;text-align:right;">${rupee(i.total)}</td></tr>`,
-            )
-            .join('')}
-        </table>
-        <div style="text-align:center;margin-top:24px;">
-          ${invoiceUrl ? `<a href="${invoiceUrl}" style="display:inline-block;background:${BRAND};color:#fff;text-decoration:none;padding:11px 22px;border-radius:10px;font-weight:600;">View Invoice</a>` : ''}
-          ${trackUrl ? `<a href="${trackUrl}" style="display:inline-block;margin-left:8px;color:${BRAND};text-decoration:none;padding:11px 12px;font-weight:600;">Track Order</a>` : ''}
-        </div>
-        <p style="color:#9ca3af;font-size:12px;text-align:center;margin-top:24px;">${SHOP.name} · ${SHOP.phone}<br/>${SHOP.address}</p>
-      </div>
-    </div>
-  </div></body></html>`;
-};
-
-module.exports = { getInvoiceData, renderInvoiceHtml, renderOrderEmailHtml, SHOP };
+module.exports = { getInvoiceData, renderInvoiceHtml, taxSummary };

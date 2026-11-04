@@ -1,27 +1,16 @@
 const express = require('express');
 const router = express.Router();
 const ticketController = require('../controllers/ticketController');
-const { verifyToken } = require('../middleware');
+const { verifyToken, verifyAdmin, optionalAuth, requireOwnerOrAdmin } = require('../middleware');
 
-// Create ticket (contact form or order-linked support request)
-router.post('/', ticketController.createTicket);
+const admin = [verifyToken, verifyAdmin];
 
-// Get all tickets (admin list)
-router.get('/', ticketController.getAllTickets);
-
-// Get tickets raised by a specific customer
-router.get('/my/:userId', ticketController.getMyTickets);
-
-// Get a single ticket (full thread)
-router.get('/:id', ticketController.getTicketById);
-
-// Reply to a ticket (customer or admin — role decided from the token)
+router.post('/', optionalAuth, ticketController.createTicket); // public; userId from token if present
+router.get('/', admin, ticketController.getAllTickets);
+router.get('/my/:userId', verifyToken, requireOwnerOrAdmin('userId'), ticketController.getMyTickets);
+router.get('/:id', verifyToken, ticketController.getTicketById); // owner or admin (checked in controller)
 router.post('/:id/reply', verifyToken, ticketController.replyToTicket);
-
-// Update ticket status (admin)
-router.put('/:id', ticketController.updateTicket);
-
-// Delete ticket (admin)
-router.delete('/:id', ticketController.deleteTicket);
+router.put('/:id', admin, ticketController.updateTicket);
+router.delete('/:id', admin, ticketController.deleteTicket);
 
 module.exports = router;

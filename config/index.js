@@ -2,40 +2,48 @@ const mongoose = require("mongoose");
 const cloudinary = require('cloudinary').v2;
 const Razorpay = require("razorpay");
 
-// Mongoose configuration
-mongoose.set('strictQuery', false);
+// NOTE: `strictQuery:false` used to be set here. Mongoose 8 already defaults to false, so the
+// explicit override was removed. Untrusted input is coerced to strings / stripped of `$` keys
+// at the edge (see server.js + utils/http.js), which is what actually prevents operator injection.
+// `sanitizeFilter` is deliberately NOT enabled globally: it would also neuter our own `$in`/`$gte` filters.
 
-// Database Configuration
-let isConnected = false;
+// ---------------------------------------------------------------------------
+// Database: lazy, cached connection (safe for serverless — one connection per warm instance).
+// ---------------------------------------------------------------------------
+let connPromise = null;
 
-const connectDB = async () => {
-  if (isConnected) return;
+mongoose.connection.on('disconnected', () => { connPromise = null; });
+mongoose.connection.on('error', () => { connPromise = null; });
+
+const connectDB = () => {
+  if (mongoose.connection.readyState === 1) return Promise.resolve(mongoose.connection);
+  if (connPromise) return connPromise;
 
   const uri = process.env.MONGODB_URI;
-  if (!uri) throw new Error("MONGODB_URI not defined");
+  if (!uri) return Promise.reject(new Error("MONGODB_URI not defined"));
 
-  try {
-    await mongoose.connect(uri, {
-      bufferCommands: false,
-      serverSelectionTimeoutMS: 5000,
+  connPromise = mongoose
+    .connect(uri, { bufferCommands: false, serverSelectionTimeoutMS: 5000 })
+    .then((m) => {
+      console.log("MongoDB connected");
+      return m.connection;
+    })
+    .catch((err) => {
+      connPromise = null; // allow the next request to retry
+      console.error("MongoDB connection failed:", err.message);
+      throw err;
     });
-
-    isConnected = true;
-    console.log("MongoDB connected");
-  } catch (err) {
-    console.error("MongoDB connection failed:", err.message);
-    throw err;
-  }
+  return connPromise;
 };
 
 // Cloudinary Configuration
 const { CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET } = process.env;
-const isCloudinaryConfigured = CLOUDINARY_CLOUD_NAME && 
-  CLOUDINARY_API_KEY && 
-  CLOUDINARY_API_SECRET && 
+const isCloudinaryConfigured = Boolean(CLOUDINARY_CLOUD_NAME &&
+  CLOUDINARY_API_KEY &&
+  CLOUDINARY_API_SECRET &&
   CLOUDINARY_CLOUD_NAME !== 'your_cloud_name' &&
   CLOUDINARY_API_KEY !== 'your_api_key' &&
-  CLOUDINARY_API_SECRET !== 'your_api_secret';
+  CLOUDINARY_API_SECRET !== 'your_api_secret');
 
 if (isCloudinaryConfigured) {
   cloudinary.config({
@@ -43,7 +51,6 @@ if (isCloudinaryConfigured) {
     api_key: CLOUDINARY_API_KEY,
     api_secret: CLOUDINARY_API_SECRET
   });
-  console.log('Cloudinary configured');
 } else {
   console.warn('Cloudinary not configured - image uploads will be disabled');
 }

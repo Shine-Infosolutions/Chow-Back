@@ -1,6 +1,32 @@
 const mongoose = require('mongoose');
 const { isGorakhpurPincode } = require('../config/gorakhpurPincodes');
 
+const refundSchema = new mongoose.Schema({
+  amount: { type: Number, required: true, min: 0 },
+  reason: String,
+  mode: { type: String, enum: ['razorpay', 'manual'], required: true },
+  razorpayRefundId: String,
+  status: { type: String, enum: ['pending', 'processed', 'failed'], default: 'pending' },
+  error: String,
+  arn: String,               // bank reference (acquirer_data.arn) once Razorpay reports it
+  creditNoteNumber: String,  // {prefix}/CN/{FY}/{seq}, assigned when processed
+  createdAt: { type: Date, default: Date.now },
+  by: { type: mongoose.Schema.Types.ObjectId, ref: 'user' }
+});
+
+const shippingAddressSchema = new mongoose.Schema({
+  firstName: String,
+  lastName: String,
+  street: String,
+  apartment: String,
+  city: String,
+  state: String,
+  postcode: String,
+  phone: String,
+  altPhone: String,
+  email: String
+}, { _id: false });
+
 const orderSchema = new mongoose.Schema({
   userId: {
     type: mongoose.Schema.Types.ObjectId,
@@ -11,6 +37,8 @@ const orderSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     required: true
   },
+  // Snapshot of the delivery address captured at create-order (invoice/admin views prefer it).
+  shippingAddress: { type: shippingAddressSchema, default: undefined },
   // Store pincode for validation (populated from address)
   deliveryPincode: {
     type: String,
@@ -28,6 +56,7 @@ const orderSchema = new mongoose.Schema({
       ref: 'Item',
       required: true
     },
+    name: String, // snapshot of the item name at purchase time
     quantity: {
       type: Number,
       required: true,
@@ -40,8 +69,12 @@ const orderSchema = new mongoose.Schema({
     },
     weight: {
       type: Number,
-      default: 500 // Default 500g per item
-    }
+      default: 500 // grams per unit
+    },
+    // Units actually removed from stock at payment confirmation (absent on legacy orders).
+    stockDeducted: { type: Number },
+    gstRate: { type: Number },  // % snapshot at checkout (absent on legacy orders = 5)
+    hsnCode: { type: String }
   }],
   totalAmount: {
     type: Number,
@@ -52,6 +85,14 @@ const orderSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  // Tax snapshot at checkout (legacy orders: absent → regular, 5% added on top).
+  gstScheme: { type: String, enum: ['regular', 'composition', 'unregistered'] },
+  pricesIncludeGst: { type: Boolean },
+  gstAmount: { type: Number },
+  platformFeePercent: { type: Number },
+  // Tax invoice number, assigned once on first successful payment.
+  invoiceNumber: { type: String },
+  invoiceDate: { type: Date },
   currency: {
     type: String,
     default: 'INR'
@@ -61,6 +102,11 @@ const orderSchema = new mongoose.Schema({
   altPhone: { type: String },
   // Delivery date is chosen by admin after accepting the order (no auto ETA)
   deliveryDate: { type: Date },
+  // Timeline timestamps (set as statuses change)
+  paidAt: { type: Date },
+  shippedAt: { type: Date },
+  outForDeliveryAt: { type: Date },
+  deliveredAt: { type: Date },
   status: {
     type: String,
     enum: ['pending', 'confirmed', 'shipped', 'delivered', 'cancelled', 'failed'],
@@ -69,15 +115,12 @@ const orderSchema = new mongoose.Schema({
   deliveryProvider: {
     type: String,
     enum: ['DELHIVERY', 'SELF'],
-    default: 'DELHIVERY',
+    default: 'SELF',
     validate: {
       validator: function(value) {
-        // CRITICAL: Enforce GKP business rule at schema level
-        if (value === 'DELHIVERY') {
-          // Use deliveryPincode field for validation
-          if (this.deliveryPincode && isGorakhpurPincode(this.deliveryPincode)) {
-            return false; // Block Delhivery for GKP
-          }
+        // Enforce GKP business rule at schema level
+        if (value === 'DELHIVERY' && this.deliveryPincode && isGorakhpurPincode(this.deliveryPincode)) {
+          return false;
         }
         return ['DELHIVERY', 'SELF'].includes(value);
       },
@@ -87,7 +130,7 @@ const orderSchema = new mongoose.Schema({
   deliveryProviderDisplay: {
     type: String,
     default: function() {
-      return this.deliveryProvider === 'self' 
+      return this.deliveryProvider === 'SELF'
         ? 'Delivered by Chowdhary Sweets (Local Delivery)'
         : 'Courier Delivery via Delhivery';
     }
@@ -98,32 +141,28 @@ const orderSchema = new mongoose.Schema({
     default: 'PENDING'
   },
   waybill: {
-    type: String,
-    sparse: true
+    type: String
   },
   shipping: {
-    provider: { 
-      type: String, 
+    provider: {
+      type: String,
       default: function() {
         return this.deliveryProvider; // MUST match deliveryProvider
       }
     },
     total: Number,
-    breakdown: {
-      baseRate: Number,
-      weightRate: Number,
-      fuelSurcharge: Number
-    },
+    breakdown: { type: mongoose.Schema.Types.Mixed },
     charged: { type: Boolean, default: false },
     refunded: { type: Boolean, default: false }
   },
   totalWeight: Number,
-  distance: { type: Number, default: 0 }, // Distance in km
+  distance: { type: Number, default: 0 }, // Distance in km (null when geocoding failed)
   shipmentAttempts: { type: Number, default: 0 },
   shipmentCreated: { type: Boolean, default: false },
   shipmentLastError: String,
   rtoCharges: Number,
   logisticsLoss: Number,
+  // Prepaid only — there is no COD anywhere.
   paymentMode: {
     type: String,
     enum: ['PREPAID'],
@@ -134,29 +173,45 @@ const orderSchema = new mongoose.Schema({
     enum: ['pending', 'paid', 'failed', 'cancelled'],
     default: 'pending'
   },
+  // Razorpay attempts. `amount` is ALWAYS in paise (as Razorpay reports it);
+  // API responses add `amountRupees`.
   razorpayData: [{
     orderId: String,
     paymentId: String,
     signature: String,
-    amount: Number,
+    amount: Number, // paise
     currency: String,
     status: String,
     method: String,
     errorReason: String,
-    source: { type: String, enum: ['api', 'webhook', 'verify_payment', 'manual_confirmation'], default: 'api' },
+    source: { type: String, enum: ['api', 'webhook', 'verify_payment', 'manual_confirmation', 'reconcile'], default: 'api' },
     signatureVerified: { type: Boolean, default: false },
     attemptNumber: { type: Number, default: 1 },
     failureCode: String,
     failureDescription: String,
+    note: String,
     createdAt: { type: Date, default: Date.now }
   }],
+  lastPaymentError: String,
   confirmedAt: Date,
   cancelledAt: Date,
   rtoHandled: { type: Boolean, default: false },
   // ----- Business-owner order management -----
   cancelReason: String,
-  refundStatus: { type: String, enum: ['none', 'pending', 'processed'], default: 'none' },
+  refunds: [refundSchema],
+  refundedAmount: { type: Number, default: 0 }, // committed (pending + processed) refunds, rupees
+  refundStatus: { type: String, enum: ['none', 'pending', 'partial', 'processed', 'failed'], default: 'none' },
   stockRestored: { type: Boolean, default: false },
+  // Append-only audit trail of status / payment / refund changes.
+  statusHistory: [{
+    _id: false,
+    status: String,
+    deliveryStatus: String,
+    paymentStatus: String,
+    at: { type: Date, default: Date.now },
+    by: { type: mongoose.Schema.Types.ObjectId, ref: 'user' },
+    note: String
+  }],
   isDelayed: { type: Boolean, default: false },
   delayReason: String,
   adminNotes: String
@@ -166,39 +221,40 @@ const orderSchema = new mongoose.Schema({
 
 // Method to calculate weight (single source of truth)
 orderSchema.methods.calculateWeight = function() {
-  return this.items.reduce((sum, item) => {
-    return sum + (item.weight || 500) * item.quantity;
-  }, 0);
+  return this.items.reduce((sum, item) => sum + (item.weight || 500) * item.quantity, 0);
 };
 
 // Pre-save middleware for consistency and business rules
 orderSchema.pre('save', function(next) {
-  // Enforce shipping.provider = deliveryProvider consistency
   if (this.shipping && this.deliveryProvider) {
     this.shipping.provider = this.deliveryProvider;
   }
-  
+
   // Self delivery orders NEVER have waybill
   if (this.deliveryProvider === 'SELF' && this.waybill) {
     this.waybill = undefined;
     this.shipmentCreated = false;
   }
-  
-  // Auto-set timestamps
+
   if (this.isModified('status')) {
-    if (this.status === 'confirmed' && !this.confirmedAt) {
-      this.confirmedAt = new Date();
-    }
-    if (this.status === 'cancelled' && !this.cancelledAt) {
-      this.cancelledAt = new Date();
-    }
+    if (this.status === 'confirmed' && !this.confirmedAt) this.confirmedAt = new Date();
+    if (this.status === 'cancelled' && !this.cancelledAt) this.cancelledAt = new Date();
   }
-  
+  if (this.isModified('deliveryStatus') && this.deliveryStatus === 'DELIVERED' && !this.deliveredAt) {
+    this.deliveredAt = new Date();
+  }
+
   next();
 });
 
 // Indexes for better query performance
 orderSchema.index({ userId: 1, createdAt: -1 });
 orderSchema.index({ status: 1, createdAt: -1 });
+orderSchema.index({ paymentStatus: 1, createdAt: -1 });
+orderSchema.index({ waybill: 1 }, { sparse: true });
+orderSchema.index({ invoiceNumber: 1 }, { unique: true, sparse: true });
+orderSchema.index({ 'razorpayData.orderId': 1 });
+orderSchema.index({ 'razorpayData.paymentId': 1 });
+orderSchema.index({ 'refunds.razorpayRefundId': 1 }, { sparse: true });
 
 module.exports = mongoose.model('Order', orderSchema);

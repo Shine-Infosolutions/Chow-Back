@@ -1,8 +1,9 @@
 /**
  * Chowdhry Sweet House — Zomato catalog seed (clean slate)
  *
- *   node seedZomato.js          Wipe the old/dummy catalog, then seed ONLY the
- *                               real Zomato-listed sweets (safe to re-run)
+ *   node seedZomato.js --wipe   Wipe the old/dummy catalog, then seed ONLY the
+ *                               real Zomato-listed sweets (safe to re-run).
+ *                               Without --wipe the script refuses to run.
  *
  * Source: products from the shop's Zomato listing (see provided screenshots).
  * Each size option ("250gm", "500gm", "1kg", ...) is stored as a SEPARATE Item,
@@ -198,6 +199,9 @@ const tagFlags = (tags = []) => ({
 });
 
 async function run() {
+  if (!process.argv.includes('--wipe')) {
+    throw new Error('This script DELETES all items, subcategories and categories. Re-run with --wipe to confirm.');
+  }
   if (!process.env.MONGODB_URI) throw new Error('MONGODB_URI not set in .env');
   await mongoose.connect(process.env.MONGODB_URI, { serverSelectionTimeoutMS: 10000 });
   console.log('Connected to MongoDB');

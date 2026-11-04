@@ -2,194 +2,182 @@ const Item = require('../models/Item');
 const Category = require('../models/Category');
 const User = require('../models/User');
 const Order = require('../models/Order');
+const { asyncHandler, httpError, toStr, escapeRegex, parsePagination, toNum, isValidId } = require('../utils/http');
 
-const asyncHandler = (fn) => (req, res, next) => {
-  Promise.resolve(fn(req, res, next)).catch(next);
-};
-
-const createSearchRegex = (query) => new RegExp(query, 'i');
+// User input is always regex-escaped (no ReDoS / pattern injection).
+const createSearchRegex = (query) => new RegExp(escapeRegex(String(query).slice(0, 100)), 'i');
 
 const STOCK_FILTER = { stockQty: { $gt: 0 } };
-const ACTIVE_STATUS = { status: 'Active' };
+const ACTIVE_STATUS = { status: 'active' };
+const ORDER_STATUSES = ['pending', 'confirmed', 'shipped', 'delivered', 'cancelled', 'failed'];
+const PAYMENT_STATUSES = ['pending', 'paid', 'failed', 'cancelled'];
 
+// Admin global search.
 exports.globalSearch = asyncHandler(async (req, res) => {
-  const { q, type, limit = 10 } = req.query;
-  
-  if (!q) {
-    return res.status(400).json({ message: 'Search query is required' });
-  }
+  const q = toStr(req.query.q);
+  const type = toStr(req.query.type);
+  if (!q) throw httpError(400, 'Search query is required');
 
   const searchRegex = createSearchRegex(q);
+  const searchLimit = Math.min(50, Math.max(1, parseInt(toStr(req.query.limit), 10) || 10));
   const results = {};
-  const searchLimit = parseInt(limit);
-
-  const searchQueries = [];
+  const tasks = [];
 
   if (!type || type === 'items') {
-    searchQueries.push(
-      Item.find({
-        $or: [{ name: searchRegex }, { shortDesc: searchRegex }, { longDesc: searchRegex }],
-        ...ACTIVE_STATUS,
-        ...STOCK_FILTER
-      })
-      .populate('category', 'name')
-      .populate('subcategory', 'name')
-      .limit(searchLimit)
-      .select('name price discountPrice images shortDesc category subcategory')
-      .then(items => { results.items = items; })
+    tasks.push(
+      Item.find({ $or: [{ name: searchRegex }, { shortDesc: searchRegex }, { longDesc: searchRegex }], ...ACTIVE_STATUS })
+        .populate('categories', 'name')
+        .populate('subcategories', 'name')
+        .limit(searchLimit)
+        .select('name price discountPrice images shortDesc categories subcategories stockQty')
+        .then((items) => { results.items = items; })
     );
   }
-
   if (!type || type === 'categories') {
-    searchQueries.push(
-      Category.find({ name: searchRegex, ...ACTIVE_STATUS })
-      .limit(searchLimit)
-      .select('name')
-      .then(categories => { results.categories = categories; })
+    tasks.push(
+      Category.find({ name: searchRegex, ...ACTIVE_STATUS }).limit(searchLimit).select('name')
+        .then((categories) => { results.categories = categories; })
     );
   }
-
   if (!type || type === 'customers') {
-    searchQueries.push(
-      User.find({
-        $or: [{ name: searchRegex }, { email: searchRegex }, { phone: searchRegex }],
-        status: 'active'
-      })
-      .limit(searchLimit)
-      .select('name email phone')
-      .then(customers => { results.customers = customers; })
+    tasks.push(
+      User.find({ $or: [{ name: searchRegex }, { email: searchRegex }, { phone: searchRegex }] })
+        .limit(searchLimit)
+        .select('name email phone status isGuest')
+        .then((customers) => { results.customers = customers; })
     );
   }
-
   if (!type || type === 'orders') {
-    searchQueries.push(
-      Order.find()
-      .populate({ path: 'customerId', match: { name: searchRegex }, select: 'name email' })
-      .populate('items.itemId', 'name')
-      .limit(searchLimit)
-      .select('customerId totalAmount status paymentStatus createdAt')
-      .then(orders => { results.orders = orders.filter(order => order.customerId); })
-    );
+    tasks.push((async () => {
+      const users = await User.find({ $or: [{ name: searchRegex }, { email: searchRegex }, { phone: searchRegex }] }).select('_id').limit(200);
+      const or = [{ userId: { $in: users.map((u) => u._id) } }, { waybill: searchRegex }];
+      if (isValidId(q)) or.push({ _id: q });
+      results.orders = await Order.find({ $or: or })
+        .populate('userId', 'name email')
+        .populate('items.itemId', 'name')
+        .sort({ createdAt: -1 })
+        .limit(searchLimit)
+        .select('userId totalAmount status paymentStatus createdAt waybill');
+    })());
   }
 
-  await Promise.all(searchQueries);
-  res.json(results);
+  await Promise.all(tasks);
+  res.json({ success: true, ...results });
 });
 
+// Public storefront search.
 exports.searchItems = asyncHandler(async (req, res) => {
-  const { q, category, subcategory, minPrice, maxPrice, isBestSeller, isOnSale, limit = 20, page = 1 } = req.query;
+  const q = toStr(req.query.q);
+  const category = toStr(req.query.category);
+  const subcategory = toStr(req.query.subcategory);
+  const { page, limit, skip } = parsePagination(req.query, { defaultLimit: 20, maxLimit: 1000 });
 
   const query = { ...ACTIVE_STATUS, ...STOCK_FILTER };
-  
   if (q) {
     const searchRegex = createSearchRegex(q);
     query.$or = [{ name: searchRegex }, { shortDesc: searchRegex }, { longDesc: searchRegex }];
   }
-
-  if (category) query.category = category;
-  if (subcategory) query.subcategory = subcategory;
-  if (minPrice || maxPrice) {
-    query.price = {};
-    if (minPrice) query.price.$gte = parseFloat(minPrice);
-    if (maxPrice) query.price.$lte = parseFloat(maxPrice);
+  if (category) {
+    if (!isValidId(category)) throw httpError(400, 'Invalid category');
+    query.categories = category;
   }
-  if (isBestSeller === 'true') query.isBestSeller = true;
-  if (isOnSale === 'true') query.isOnSale = true;
+  if (subcategory) {
+    if (!isValidId(subcategory)) throw httpError(400, 'Invalid subcategory');
+    query.subcategories = subcategory;
+  }
+  const minPrice = toNum(req.query.minPrice);
+  const maxPrice = toNum(req.query.maxPrice);
+  if (minPrice != null || maxPrice != null) {
+    query.price = {};
+    if (minPrice != null) query.price.$gte = minPrice;
+    if (maxPrice != null) query.price.$lte = maxPrice;
+  }
+  if (toStr(req.query.isBestSeller) === 'true') query.isBestSeller = true;
+  if (toStr(req.query.isOnSale) === 'true') query.isOnSale = true;
 
-  const pageNum = parseInt(page);
-  const limitNum = parseInt(limit);
-  const skip = (pageNum - 1) * limitNum;
-  
   const [items, total] = await Promise.all([
-    Item.find(query)
-      .populate('category', 'name')
-      .populate('subcategory', 'name')
-      .skip(skip)
-      .limit(limitNum)
-      .sort({ createdAt: -1 }),
-    Item.countDocuments(query)
+    Item.find(query).populate('categories', 'name').populate('subcategories', 'name').skip(skip).limit(limit).sort({ createdAt: -1 }),
+    Item.countDocuments(query),
   ]);
 
   res.json({
+    success: true,
     items,
     pagination: {
-      currentPage: pageNum,
-      totalPages: Math.ceil(total / limitNum),
+      currentPage: page,
+      totalPages: Math.ceil(total / limit),
       totalItems: total,
       hasNext: skip + items.length < total,
-      hasPrev: pageNum > 1
-    }
+      hasPrev: page > 1,
+    },
   });
 });
 
+// Admin.
 exports.searchCustomers = asyncHandler(async (req, res) => {
-  const { q, status, limit = 20, page = 1 } = req.query;
-  
+  const q = toStr(req.query.q);
+  const status = toStr(req.query.status);
+  const { page, limit, skip } = parsePagination(req.query, { defaultLimit: 20, maxLimit: 100 });
+
   const query = {};
-  
   if (q) {
     const searchRegex = createSearchRegex(q);
     query.$or = [{ name: searchRegex }, { email: searchRegex }, { phone: searchRegex }];
   }
-  
-  if (status) query.status = status;
+  if (status) {
+    if (!['active', 'inactive'].includes(status)) throw httpError(400, 'Invalid status');
+    query.status = status;
+  }
 
-  const pageNum = parseInt(page);
-  const limitNum = parseInt(limit);
-  const skip = (pageNum - 1) * limitNum;
-  
   const [customers, total] = await Promise.all([
-    User.find(query).skip(skip).limit(limitNum).sort({ createdAt: -1 }),
-    User.countDocuments(query)
+    User.find(query).select('-password').skip(skip).limit(limit).sort({ createdAt: -1 }),
+    User.countDocuments(query),
   ]);
 
   res.json({
+    success: true,
     customers,
-    pagination: {
-      currentPage: pageNum,
-      totalPages: Math.ceil(total / limitNum),
-      totalItems: total
-    }
+    pagination: { currentPage: page, totalPages: Math.ceil(total / limit), totalItems: total },
   });
 });
 
+// Admin.
 exports.searchOrders = asyncHandler(async (req, res) => {
-  const { q, status, paymentStatus, limit = 20, page = 1 } = req.query;
-  
+  const q = toStr(req.query.q);
+  const status = toStr(req.query.status);
+  const paymentStatus = toStr(req.query.paymentStatus);
+  const { page, limit, skip } = parsePagination(req.query, { defaultLimit: 20, maxLimit: 100 });
+
   const query = {};
-  if (status) query.status = status;
-  if (paymentStatus) query.paymentStatus = paymentStatus;
-
-  const pageNum = parseInt(page);
-  const limitNum = parseInt(limit);
-  const skip = (pageNum - 1) * limitNum;
-  
-  let orders = await Order.find(query)
-    .populate('customerId', 'name email phone')
-    .populate('items.itemId', 'name price')
-    .skip(skip)
-    .limit(limitNum)
-    .sort({ createdAt: -1 });
-
+  if (status) {
+    if (!ORDER_STATUSES.includes(status)) throw httpError(400, 'Invalid status');
+    query.status = status;
+  }
+  if (paymentStatus) {
+    if (!PAYMENT_STATUSES.includes(paymentStatus)) throw httpError(400, 'Invalid paymentStatus');
+    query.paymentStatus = paymentStatus;
+  }
   if (q) {
     const searchRegex = createSearchRegex(q);
-    orders = orders.filter(order => 
-      order.customerId && (
-        searchRegex.test(order.customerId.name) ||
-        searchRegex.test(order.customerId.email) ||
-        searchRegex.test(order.customerId.phone)
-      )
-    );
+    const users = await User.find({ $or: [{ name: searchRegex }, { email: searchRegex }, { phone: searchRegex }] }).select('_id').limit(500);
+    const or = [{ userId: { $in: users.map((u) => u._id) } }, { waybill: searchRegex }, { 'shippingAddress.phone': searchRegex }];
+    if (isValidId(q)) or.push({ _id: q });
+    query.$or = or;
   }
 
-  const total = await Order.countDocuments(query);
+  const [orders, total] = await Promise.all([
+    Order.find(query)
+      .populate('userId', 'name email phone isGuest')
+      .populate('items.itemId', 'name price')
+      .skip(skip)
+      .limit(limit)
+      .sort({ createdAt: -1 }),
+    Order.countDocuments(query),
+  ]);
 
   res.json({
+    success: true,
     orders,
-    pagination: {
-      currentPage: pageNum,
-      totalPages: Math.ceil(total / limitNum),
-      totalItems: total
-    }
+    pagination: { currentPage: page, totalPages: Math.ceil(total / limit), totalItems: total },
   });
 });

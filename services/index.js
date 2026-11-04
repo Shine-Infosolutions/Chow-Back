@@ -11,6 +11,42 @@ const createAxiosInstance = (baseURL, timeout = 10000) => {
 
 const axiosInstance = createAxiosInstance();
 
+// ==================== SHARED HELPERS ====================
+
+// Orders store providers in UPPERCASE ('SELF' | 'DELHIVERY'); delivery quotes use lowercase.
+// Always compare through this helper.
+const normalizeProvider = (p) => {
+  const v = String(p || '').trim().toUpperCase();
+  if (v === 'SELF' || v === 'LOCAL') return 'SELF';
+  if (v === 'DELHIVERY') return 'DELHIVERY';
+  return null;
+};
+
+// THE Delhivery status -> internal deliveryStatus map (used by the webhook and tracking).
+const DELHIVERY_STATUS_MAP = {
+  'manifested': 'SHIPMENT_CREATED',
+  'shipped': 'SHIPMENT_CREATED',
+  'dispatched': 'SHIPMENT_CREATED',
+  'in transit': 'IN_TRANSIT',
+  'out for delivery': 'OUT_FOR_DELIVERY',
+  'delivered': 'DELIVERED',
+  'rto initiated': 'RTO',
+  'rto-initiated': 'RTO',
+  'rto delivered': 'RTO',
+  'rto-delivered': 'RTO',
+  'rto': 'RTO',
+  'lost': 'RTO',
+  'damaged': 'RTO',
+  'cancelled': 'PRE_PICKUP_CANCEL',
+  'canceled': 'PRE_PICKUP_CANCEL'
+};
+const mapDelhiveryStatus = (status) => DELHIVERY_STATUS_MAP[String(status || '').trim().toLowerCase()] || null;
+
+// Fee charged when geocoding fails (never free). Override with LOCAL_DELIVERY_FALLBACK_FEE.
+const LOCAL_DELIVERY_FALLBACK_FEE = Number(process.env.LOCAL_DELIVERY_FALLBACK_FEE) || 100;
+
+const coordCache = new Map();
+
 // ==================== DISTANCE SERVICE ====================
 
 class DistanceService {
@@ -26,7 +62,7 @@ class DistanceService {
       try {
         const response = await axiosInstance.get(
           `https://router.project-osrm.org/route/v1/driving/${fromCoords[0]},${fromCoords[1]};${toCoords[0]},${toCoords[1]}?overview=false`,
-          { timeout: 5000 }
+          { timeout: 3000 }
         );
         
         if (response.data.routes?.[0]?.distance) {
@@ -43,13 +79,21 @@ class DistanceService {
   }
 
   async _getCoordinates(pincode) {
+    pincode = String(pincode);
+    if (!/^\d{6}$/.test(pincode)) return null;
+    if (coordCache.has(pincode)) return coordCache.get(pincode);
     try {
       const response = await axiosInstance.get(
         `https://nominatim.openstreetmap.org/search?format=json&countrycodes=in&postalcode=${pincode}&limit=1`,
-        { timeout: 5000 }
+        { timeout: 3000 }
       );
       const data = response.data;
-      return data[0] ? [parseFloat(data[0].lon), parseFloat(data[0].lat)] : null;
+      const coords = data[0] ? [parseFloat(data[0].lon), parseFloat(data[0].lat)] : null;
+      if (coords) {
+        if (coordCache.size > 1000) coordCache.delete(coordCache.keys().next().value);
+        coordCache.set(pincode, coords);
+      }
+      return coords;
     } catch {
       return null;
     }
@@ -192,7 +236,7 @@ class DelhiveryService {
   }
 
   _validatePincode(pincode) {
-    return pincode && pincode.length === 6 && /^\d{6}$/.test(pincode);
+    return typeof pincode === 'string' && /^\d{6}$/.test(pincode);
   }
 
   _buildShipmentPayload(orderData) {
@@ -244,15 +288,7 @@ class DelhiveryService {
   }
 
   _mapDelhiveryStatus(delhiveryStatus) {
-    const statusMap = {
-      'Shipped': 'SHIPMENT_CREATED', 'Dispatched': 'SHIPMENT_CREATED',
-      'In transit': 'IN_TRANSIT', 'In Transit': 'IN_TRANSIT',
-      'Out for Delivery': 'IN_TRANSIT', 'Out For Delivery': 'IN_TRANSIT',
-      'Delivered': 'DELIVERED',
-      'RTO Initiated': 'RTO', 'RTO-Initiated': 'RTO', 'RTO Delivered': 'RTO',
-      'RTO-Delivered': 'RTO', 'Cancelled': 'RTO', 'Lost': 'RTO', 'Damaged': 'RTO'
-    };
-    return statusMap[delhiveryStatus] || 'PENDING';
+    return mapDelhiveryStatus(delhiveryStatus) || 'PENDING';
   }
 
   _mockCheckPincode(pincode) {
@@ -297,7 +333,7 @@ class DelhiveryService {
   }
 
   _mockTrackShipment(waybill) {
-    const waybillTime = parseInt(waybill.replace('MOCK', ''));
+    const waybillTime = parseInt(String(waybill).replace('MOCK', ''), 10) || Date.now();
     const ageInHours = (Date.now() - waybillTime) / (1000 * 60 * 60);
     
     let status = 'SHIPMENT_CREATED', location = 'Origin Hub';
@@ -325,8 +361,9 @@ class DeliveryService {
     this.basePincode = process.env.BASE_PINCODE || '273001';
   }
 
-  async getDeliveryInfo(pincode, weight = 500) {
-    if (!pincode || pincode.length !== 6) {
+  async getDeliveryInfo(pincode, weight = 500, opts = {}) {
+    pincode = typeof pincode === 'string' || typeof pincode === 'number' ? String(pincode).trim() : '';
+    if (!/^\d{6}$/.test(pincode)) {
       return { success: false, error: 'Valid 6-digit pincode required' };
     }
 
@@ -341,12 +378,27 @@ class DeliveryService {
       };
     }
 
-    return await this._getSelfDeliveryPricing(pincode, weight);
+    return await this._getSelfDeliveryPricing(pincode, weight, opts);
   }
 
-  async _getSelfDeliveryPricing(pincode, weight) {
-    const distance = await this.distanceService.calculateDistance(this.basePincode, pincode) || 5;
+  async _getSelfDeliveryPricing(pincode, weight, opts = {}) {
+    // Overall cap so a slow geocoder can't stall checkout.
+    let timer;
+    const distance = await Promise.race([
+      this.distanceService.calculateDistance(this.basePincode, pincode),
+      new Promise((resolve) => { timer = setTimeout(() => resolve(null), 6000); })
+    ]).finally(() => clearTimeout(timer));
     const FREE_RADIUS_KM = 5;
+
+    // Geocoding failure -> charge the configured fallback fee (never free).
+    if (distance == null || !Number.isFinite(distance)) {
+      const charge = Number.isFinite(opts.fallbackFee) ? opts.fallbackFee : LOCAL_DELIVERY_FALLBACK_FEE;
+      return {
+        success: true, serviceable: true, provider: 'self', displayName: 'Local Delivery',
+        charge, distance: null, distanceUnknown: true, freeWithinKm: FREE_RADIUS_KM,
+        breakdown: { fallback: true, total: charge }
+      };
+    }
 
     // Free delivery within 5 km of the store; charged beyond that.
     let charge, breakdown;
@@ -389,20 +441,17 @@ class DeliveryService {
 
   validateDeliveryProvider(pincode, selectedProvider) {
     const isGorakhpur = isGorakhpurPincode(pincode);
-    
-    if (isGorakhpur && selectedProvider === 'delhivery') {
-      throw new Error('CRITICAL: Delhivery cannot be used for Gorakhpur deliveries');
-    }
-    
-    if (!isGorakhpur && selectedProvider === 'self') {
-      throw new Error('Local delivery only available for Gorakhpur pincodes');
-    }
-    
+    const provider = normalizeProvider(selectedProvider);
+    const fail = (msg) => { const e = new Error(msg); e.status = 400; e.expose = true; throw e; };
+
+    if (!provider) fail('Unknown delivery provider');
+    if (isGorakhpur && provider === 'DELHIVERY') fail('Delhivery cannot be used for Gorakhpur deliveries');
+    if (!isGorakhpur && provider === 'SELF') fail('Local delivery only available for Gorakhpur pincodes');
     return true;
   }
 
   shouldCreateDelhiveryShipment(order) {
-    return order?.deliveryProvider === 'delhivery' && 
+    return normalizeProvider(order?.deliveryProvider) === 'DELHIVERY' &&
            order?.paymentStatus === 'paid' && 
            order?.status === 'confirmed' && 
            !order?.waybill;
@@ -412,6 +461,10 @@ class DeliveryService {
 // ==================== EXPORTS ====================
 
 module.exports = {
+  normalizeProvider,
+  mapDelhiveryStatus,
+  DELHIVERY_STATUS_MAP,
+  LOCAL_DELIVERY_FALLBACK_FEE,
   distanceService: new DistanceService(),
   delhiveryService: new DelhiveryService(),
   deliveryService: new DeliveryService()

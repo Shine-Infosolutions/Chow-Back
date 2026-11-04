@@ -1,12 +1,32 @@
 const express = require("express");
 const cors = require("cors");
+const multer = require("multer");
+const helmet = require("helmet");
 require("dotenv").config();
 const { connectDB } = require("./config");
+const { ensureDb } = require("./middleware");
+const { stripMongoOperators } = require("./utils/http");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const isProd = process.env.NODE_ENV === "production";
 
-// CORS Configuration
+// Behind Vercel's proxy: makes req.protocol https and req.ip the client IP (rate limiting).
+app.set("trust proxy", 1);
+// Simple query parser: values are strings or arrays of strings — never nested objects
+// like ?status[$ne]=x (prevents query-string operator injection).
+app.set("query parser", "simple");
+app.disable("x-powered-by");
+
+// Security headers for a JSON API. CSP is not needed for JSON; the invoice HTML page sets its own headers.
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+    crossOriginEmbedderPolicy: false,
+  }),
+);
+
 app.use(
   cors({
     origin: [
@@ -22,89 +42,119 @@ app.use(
   }),
 );
 
-// Middleware
-app.use(express.json({ limit: "10mb" }));
-app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+// JSON body + raw bytes for webhook HMAC verification (Razorpay signs the exact raw body).
+app.use(
+  express.json({
+    limit: "1mb",
+    verify: (req, res, buf) => {
+      req.rawBody = buf;
+    },
+  }),
+);
+app.use(express.urlencoded({ extended: false, limit: "1mb" }));
 
-// Favicon handler
+// Strip `$`-prefixed / dotted keys from bodies (operator injection), after multer too.
+const sanitizeBody = (req, res, next) => {
+  if (req.body && typeof req.body === "object") stripMongoOperators(req.body);
+  next();
+};
+app.use(sanitizeBody);
+
 app.get("/favicon.ico", (req, res) => res.status(204).end());
 
-// API Routes
+app.get("/", (req, res) => {
+  res.json({ message: "Chowdhry Backend API running", status: "healthy", timestamp: new Date().toISOString() });
+});
+
+// Lazily connect (cached) before any API handler runs.
+app.use("/api", ensureDb);
+
 const routes = [
   ["/api/categories", require("./routes/categoryRoutes")],
   ["/api/subcategories", require("./routes/subcategoryRoutes")],
   ["/api/items", require("./routes/itemRoutes")],
   ["/api/dashboard", require("./routes/dashboardRoutes")],
+  ["/api/reports", require("./routes/reportRoutes")],
+  ["/api/settings", require("./routes/settingsRoutes").settingsRouter],
+  ["/api/pages", require("./routes/settingsRoutes").pagesRouter],
+  ["/api/cron", require("./routes/cronRoutes")],
   ["/api/search", require("./routes/searchRoutes")],
   ["/api/tickets", require("./routes/tickets")],
   ["/api/auth", require("./routes/authRoutes")],
   ["/api/orders", require("./routes/orderRoutes")],
   ["/api/users", require("./routes/userRoutes")],
+  ["/api/address", require("./routes/addressRoutes")],
   ["/api/push", require("./routes/pushRoutes")],
   ["/api/admin", require("./routes/adminRoutes")],
-  ["/api", require("./routes/distanceRoutes")],
   ["/api/payment", require("./routes/paymentRoutes")],
   ["/api/sweet-deals", require("./routes/sweetDealRoutes")],
   ["/api/delhivery", require("./routes/delhiveryRoutes")],
   ["/api/delivery", require("./routes/deliveryRoutes")],
+  ["/api", require("./routes/distanceRoutes")],
 ];
+routes.forEach(([path, router]) => app.use(path, sanitizeBody, router));
+app.get("/api/sitemap.xml", require("./controllers/sitemapController").sitemap);
 
-routes.forEach(([path, router]) => app.use(path, router));
-
-// Health check
-app.get("/", (req, res) => {
-  res.json({
-    message: "Chowdhry Backend API running",
-    status: "healthy",
-    timestamp: new Date().toISOString(),
-  });
+// 404
+app.use((req, res) => {
+  res.status(404).json({ success: false, message: "Route not found" });
 });
 
-// 404 handler
-app.use("*", (req, res) => {
-  res.status(404).json({ error: "Route not found" });
-});
-
-// Global error handler
+// Central error handler: { success:false, message } with a proper status.
+// 5xx messages are hidden in production.
+// eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
-  console.error("Error:", err.message);
-  res.status(err.status || 500).json({
-    success: false,
-    error:
-      process.env.NODE_ENV === "production"
-        ? "Internal server error"
-        : err.message,
-  });
+  let status = Number(err.status || err.statusCode) || 500;
+  let message = err.message || "Internal server error";
+  const extra = err.extra || {};
+
+  if (err instanceof multer.MulterError) {
+    status = 400;
+    message = err.code === "LIMIT_FILE_SIZE" ? "File too large (max 4MB per file)" : `Upload error: ${err.message}`;
+  } else if (err.name === "ValidationError") {
+    status = 400;
+    message = Object.values(err.errors || {})[0]?.message || "Validation failed";
+  } else if (err.name === "CastError") {
+    status = 400;
+    message = `Invalid ${err.path || "value"}`;
+  } else if (err.code === 11000) {
+    status = 409;
+    message = `Duplicate value for ${Object.keys(err.keyValue || {})[0] || "a unique field"}`;
+  } else if (err.type === "entity.parse.failed") {
+    status = 400;
+    message = "Invalid JSON body";
+  } else if (err.type === "entity.too.large") {
+    status = 413;
+    message = "Request body too large";
+  } else if (
+    status >= 500 &&
+    (req.dbUnavailable || /MongooseServerSelectionError|MongoNetworkError|before initial connection/.test(`${err.name} ${err.message}`))
+  ) {
+    status = 503;
+    message = "Service temporarily unavailable";
+  }
+
+  if (status >= 500) {
+    console.error(`[${req.method} ${req.originalUrl}]`, err.stack || err.message);
+    if (isProd && status === 500) message = "Internal server error";
+  }
+  if (res.headersSent) return;
+  res.status(status).json({ success: false, message, ...extra });
 });
 
-// Process handlers
-const gracefulShutdown = (signal) => {
-  console.log(`${signal} received, shutting down gracefully`);
-  process.exit(0);
-};
-
-process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
-process.on("SIGINT", () => gracefulShutdown("SIGINT"));
-
-process.on("unhandledRejection", (reason, promise) => {
+process.on("unhandledRejection", (reason) => {
   console.error("Unhandled Rejection:", reason?.message || reason);
-  if (process.env.NODE_ENV !== "production") process.exit(1);
 });
 
-process.on("uncaughtException", (error) => {
-  console.error("Uncaught Exception:", error?.message || error);
-  process.exit(1);
-});
-
-// Start server
-connectDB()
-  .then(() => {
-    app.listen(PORT, () => {
-      console.log(`🚀 Server running on port ${PORT}`);
-      console.log(`📍 Environment: ${process.env.NODE_ENV || "development"}`);
+// Local / long-running mode only. On Vercel the exported app is used as the handler.
+if (require.main === module) {
+  connectDB()
+    .catch((err) => console.error("Initial DB connection failed (will retry per request):", err.message))
+    .finally(() => {
+      app.listen(PORT, () => {
+        console.log(`Server running on port ${PORT} (${process.env.NODE_ENV || "development"})`);
+      });
     });
-  })
-  .catch((err) => {
-    console.error("❌ DB connection failed:", err);
-    process.exit(1);
-  });
+}
+
+module.exports = app;

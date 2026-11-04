@@ -21,7 +21,7 @@ const FRESH = process.argv.includes('--fresh');
 const ADMIN = {
   name: 'Chowdhry Admin',
   email: process.env.SEED_ADMIN_EMAIL || 'admin@chowdhry.com',
-  password: process.env.SEED_ADMIN_PASSWORD || 'Chowdhry@123',
+  password: process.env.SEED_ADMIN_PASSWORD, // required only when the admin must be created
   phone: '9415000000',
 };
 
@@ -191,19 +191,17 @@ async function run() {
   console.log('Connected to MongoDB');
 
   // 1. Admin (save() so the password pre-save hook hashes it)
-  let admin = await User.findOne({ email: ADMIN.email });
-  if (admin) {
-    admin.name = ADMIN.name;
-    admin.phone = ADMIN.phone;
-    admin.role = 'admin';
-    admin.status = 'active';
-    admin.password = ADMIN.password; // re-hashed on save
-    await admin.save();
-    console.log(`Admin updated: ${ADMIN.email}`);
+  // Only create an admin when none exists. Never reset an existing admin's password.
+  const existingAdmin = await User.findOne({ role: 'admin' });
+  if (existingAdmin) {
+    console.log('Admin account already exists — left unchanged.');
   } else {
-    admin = new User({ ...ADMIN, role: 'admin', status: 'active' });
+    if (!ADMIN.password || ADMIN.password.length < 12) {
+      throw new Error('No admin exists. Set SEED_ADMIN_PASSWORD (min 12 chars) in the environment to create one.');
+    }
+    const admin = new User({ ...ADMIN, role: 'admin', status: 'active' });
     await admin.save();
-    console.log(`Admin created: ${ADMIN.email}`);
+    console.log(`Admin created: ${ADMIN.email} (password taken from SEED_ADMIN_PASSWORD; not printed)`);
   }
 
   // 2. Optional clean slate for the catalog (never touches users/orders)
@@ -267,9 +265,7 @@ async function run() {
   console.log(`Items ready: ${count}`);
 
   console.log('\n──────────────────────────────────────────');
-  console.log(' Seed complete. Admin login:');
-  console.log(`   Email:    ${ADMIN.email}`);
-  console.log(`   Password: ${ADMIN.password}`);
+  console.log(' Seed complete.');
   console.log('──────────────────────────────────────────');
 
   await mongoose.disconnect();

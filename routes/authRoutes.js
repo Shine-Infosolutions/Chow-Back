@@ -1,22 +1,21 @@
 const express = require('express');
 const router = express.Router();
 const authController = require('../controllers/authController');
-const { verifyToken, verifyAdmin } = require('../middleware');
+const { verifyToken, requireOwnerOrAdmin, authLimiter, registerLimiter, guestLimiter } = require('../middleware');
 
-// Public Routes
-router.post('/register', authController.userRegister);
-router.post('/admin/register', authController.adminRegister);
-router.post('/login', authController.userLogin);
-router.post('/admin/login', authController.adminLogin);
+// Public (rate limited). POST /admin/register was removed: admins are created by seed.js only.
+router.post('/register', registerLimiter, authController.userRegister);
+router.post('/guest', guestLimiter, authController.guestLogin); // mobile-only guest checkout
+router.post('/login', authLimiter, authController.userLogin);
+router.post('/admin/login', authLimiter, authController.adminLogin);
 
-// Protected User Routes
-router.get('/profile/:id', verifyToken, authController.userProfile);
-router.put('/profile/:id', verifyToken, authController.updateUserProfile);
+// Authenticated
+router.get('/me', verifyToken, authController.me);
+router.post('/claim', verifyToken, authController.claimAccount);
+router.delete('/account', verifyToken, authController.deleteAccount);
+router.get('/profile/:id', verifyToken, requireOwnerOrAdmin('id'), authController.userProfile);
+router.put('/profile/:id', verifyToken, requireOwnerOrAdmin('id'), authController.updateUserProfile);
 
-// Address Routes
-router.get('/address/:id', verifyToken, authController.getAddresses);
-router.post('/address/:id', verifyToken, authController.addAddress);
-router.put('/address/:id/:addressId', verifyToken, authController.updateAddress);
-router.delete('/address/:id/:addressId', verifyToken, authController.deleteAddress);
+// The duplicate /auth/address/* API was removed (storefront uses /users/:userId/addresses).
 
 module.exports = router;

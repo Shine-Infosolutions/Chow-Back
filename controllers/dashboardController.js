@@ -1,66 +1,43 @@
 const Order = require('../models/Order');
 const User = require('../models/User');
 const Ticket = require('../models/Ticket');
+const Item = require('../models/Item');
+const { asyncHandler, round2 } = require('../utils/http');
+const { istTodayRange } = require('../utils/dates');
 
-// Get dashboard stats
-exports.getDashboardStats = async (req, res) => {
-  try {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
+// "Today" is the IST calendar day. Order counts/revenue only ever include PAID orders,
+// bucketed by confirmedAt (falling back to createdAt for legacy orders).
+exports.getDashboardStats = asyncHandler(async (req, res) => {
+  const { start, end } = istTodayRange();
+  const todayRange = { $gte: start, $lt: end };
+  const paidToday = {
+    paymentStatus: 'paid',
+    $or: [{ confirmedAt: todayRange }, { confirmedAt: null, createdAt: todayRange }],
+  };
 
-    const todayRange = { $gte: today, $lt: tomorrow };
-
-    const [
-      newOrders,
-      totalCustomers,
-      ticketsResolved,
-      revenueToday,
-      failedOrders
-    ] = await Promise.all([
-      Order.countDocuments({ 
-        createdAt: todayRange,
-        status: { $ne: 'failed' }
-      }),
-      User.countDocuments({ status: 'active' }),
-      Ticket.countDocuments({ 
-        status: 'resolved',
-        updatedAt: todayRange
-      }),
-      Order.aggregate([
-        {
-          $match: {
-            createdAt: todayRange,
-            paymentStatus: 'paid'
-          }
-        },
-        {
-          $group: {
-            _id: null,
-            total: { $sum: '$totalAmount' }
-          }
-        }
-      ]),
-      Order.countDocuments({
-        createdAt: todayRange,
-        $or: [
-          { status: 'failed' },
-          { paymentStatus: 'failed' },
-          { status: 'cancelled', paymentStatus: 'cancelled' }
-        ]
-      })
+  const [newOrders, totalCustomers, ticketsResolved, revenueAgg, failedOrders, pendingPayments, refundsPending, lowStock, openTickets] =
+    await Promise.all([
+      Order.countDocuments(paidToday),
+      User.countDocuments({ status: 'active', role: 'user' }),
+      Ticket.countDocuments({ status: 'resolved', updatedAt: todayRange }),
+      Order.aggregate([{ $match: paidToday }, { $group: { _id: null, total: { $sum: '$totalAmount' } } }]),
+      Order.countDocuments({ paymentStatus: 'failed', createdAt: todayRange }),
+      Order.countDocuments({ paymentStatus: { $in: ['pending', 'failed'] }, status: { $ne: 'cancelled' }, createdAt: todayRange }),
+      Order.countDocuments({ refundStatus: 'pending' }),
+      Item.countDocuments({ status: { $ne: 'inactive' }, stockQty: { $lte: 5 } }),
+      Ticket.countDocuments({ status: { $in: ['open', 'in-progress'] } }),
     ]);
 
-    res.json({
-      newOrders,
-      totalCustomers,
-      ticketsResolved,
-      revenueToday: revenueToday[0]?.total || 0,
-      failedOrders
-    });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-};
-
+  res.json({
+    success: true,
+    newOrders,
+    totalCustomers,
+    ticketsResolved,
+    revenueToday: round2(revenueAgg[0]?.total || 0),
+    failedOrders,
+    pendingPayments,
+    refundsPending,
+    lowStock,
+    openTickets,
+  });
+});

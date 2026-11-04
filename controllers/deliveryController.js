@@ -1,25 +1,15 @@
 const { deliveryService } = require('../services');
+const { getSettings, effectiveDelivery } = require('../services/settings');
+const { asyncHandler, httpError, toStr } = require('../utils/http');
 
-exports.checkDeliveryOptions = async (req, res) => {
-  try {
-    const { pincode } = req.params;
-    const { weight } = req.query;
-    
-    if (!pincode) {
-      return res.status(400).json({
-        success: false,
-        message: 'Pincode is required'
-      });
-    }
-
-    const totalWeight = parseInt(weight) || 500;
-    const deliveryInfo = await deliveryService.getDeliveryInfo(pincode, totalWeight);
-    
-    res.json(deliveryInfo);
-  } catch (error) {
-    res.status(400).json({
-      success: false,
-      message: error.message
-    });
+exports.checkDeliveryOptions = asyncHandler(async (req, res) => {
+  const pincode = toStr(req.params.pincode);
+  if (!pincode) throw httpError(400, 'Pincode is required');
+  const weight = Math.min(100000, Math.max(1, parseInt(toStr(req.query.weight), 10) || 500));
+  const { localFallbackFee, sameDayCutoff } = effectiveDelivery(await getSettings());
+  const info = await deliveryService.getDeliveryInfo(pincode, weight, { fallbackFee: localFallbackFee });
+  if (info.serviceable && info.provider === 'self' && !info.eta) {
+    info.eta = `Same-day delivery on orders paid before ${sameDayCutoff}; later orders arrive the next day.`;
   }
-};
+  res.json(info);
+});

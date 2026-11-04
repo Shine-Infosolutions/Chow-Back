@@ -2,10 +2,10 @@ const { distanceService } = require('../services');
 
 const calculateDistance = async (req, res) => {
   try {
-    const { pincode } = req.body;
+    const pincode = typeof req.body?.pincode === 'string' ? req.body.pincode.trim() : String(req.body?.pincode ?? '');
     
     if (!pincode || !/^[1-9][0-9]{5}$/.test(pincode)) {
-      return res.status(400).json({ message: 'Invalid pincode' });
+      return res.status(400).json({ success: false, message: 'Invalid pincode' });
     }
 
     const distance = await distanceService.calculateDistance(

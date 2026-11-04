@@ -15,7 +15,7 @@ const ticketSchema = new mongoose.Schema({
   itemName: { type: String },
 
   fullName: { type: String, required: true },
-  email: { type: String, required: true },
+  email: { type: String }, // optional for guest customers (phone is used instead)
   phone: { type: String },
   subject: { type: String, required: true },
   // First message text — kept for list previews / backward compatibility
@@ -32,11 +32,19 @@ const ticketSchema = new mongoose.Schema({
     default: 'open'
   },
 
+  priority: {
+    type: String,
+    enum: ['low', 'normal', 'high', 'urgent'],
+    default: 'normal'
+  },
+
   // 2-way conversation thread
   messages: [messageSchema],
   lastReplyBy: { type: String, enum: ['user', 'admin'], default: 'user' }
 }, {
   timestamps: true
 });
+
+ticketSchema.index({ userId: 1, updatedAt: -1 });
 
 module.exports = mongoose.model('Ticket', ticketSchema);

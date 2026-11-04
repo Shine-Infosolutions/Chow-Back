@@ -50,9 +50,9 @@ const saveSubscription = async (user, subscription, userAgent = '') => {
   return doc;
 };
 
-const removeSubscription = async (endpoint) => {
-  if (!endpoint) return;
-  await PushSubscription.deleteOne({ endpoint });
+const removeSubscription = async (endpoint, userId) => {
+  if (!endpoint || typeof endpoint !== 'string') return;
+  await PushSubscription.deleteOne(userId ? { endpoint, userId } : { endpoint });
 };
 
 /**

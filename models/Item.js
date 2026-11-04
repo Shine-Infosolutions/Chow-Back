@@ -34,15 +34,15 @@ const itemSchema = new mongoose.Schema({
   longDesc: {
     type: String
   },
-  images: [{
-    type: String,
+  // Array-level validator: works for save() and for update queries with runValidators
+  // (the old per-element validator read `this.images`, which is undefined in query context).
+  images: {
+    type: [String],
     validate: {
-      validator: function(v) {
-        return this.images.length <= 3;
-      },
+      validator: (v) => !v || v.length <= 3,
       message: 'Maximum 3 images allowed'
     }
-  }],
+  },
   video: {
     type: String
   },
@@ -82,9 +82,29 @@ const itemSchema = new mongoose.Schema({
     type: String,
     enum: ['active', 'inactive'],
     default: 'active'
-  }
+  },
+  // ---- Food information (FSSAI labelling) ----
+  foodType: { type: String, enum: ['veg', 'egg', 'nonveg'], default: 'veg' },
+  ingredients: { type: String, default: '' },
+  allergens: {
+    type: [{ type: String, enum: ['milk', 'nuts', 'gluten', 'soy', 'sesame', 'egg'] }],
+    default: []
+  },
+  shelfLifeDays: { type: Number, min: 0 },
+  storageInstructions: { type: String, default: '' },
+  bestBeforeNote: { type: String, default: '' },
+  netWeight: { type: String, default: '' }, // display text, e.g. "500 g"
+  hsnCode: { type: String, default: '' },   // falls back to settings.checkout.defaultHsn
+  gstRate: { type: Number, default: null },  // falls back to settings.checkout.defaultGstRate
+  countryOfOrigin: { type: String, default: 'India' },
+  // Perishables default to local delivery only; courier (Delhivery) orders need shippable:true.
+  shippable: { type: Boolean, default: false }
 }, {
   timestamps: true
 });
+
+itemSchema.index({ categories: 1 });
+itemSchema.index({ subcategories: 1 });
+itemSchema.index({ status: 1, stockQty: 1 });
 
 module.exports = mongoose.model('Item', itemSchema);

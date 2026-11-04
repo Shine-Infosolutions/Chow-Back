@@ -1,111 +1,71 @@
 const Category = require('../models/Category');
+const { asyncHandler, httpError, toStr, parsePagination } = require('../utils/http');
 
-const DEFAULT_PAGINATION = { page: 1, limit: 10 };
-
-const getPaginationParams = (query) => {
-  const page = parseInt(query.page) || DEFAULT_PAGINATION.page;
-  const limit = parseInt(query.limit) || DEFAULT_PAGINATION.limit;
-  const skip = (page - 1) * limit;
-  return { page, limit, skip };
-};
-
-const handleAsyncRoute = (fn) => async (req, res) => {
-  try {
-    await fn(req, res);
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+// Only these fields may be written by the admin.
+const pickCategory = (body = {}) => {
+  const out = {};
+  if (body.name !== undefined) out.name = toStr(body.name).slice(0, 100);
+  if (body.description !== undefined) out.description = toStr(body.description).slice(0, 1000);
+  if (body.displayRank !== undefined) {
+    const n = Number(toStr(body.displayRank) || 0);
+    if (!Number.isInteger(n) || n < 0) throw httpError(400, 'displayRank must be a non-negative integer');
+    out.displayRank = n;
   }
+  if (body.status !== undefined) {
+    const s = toStr(body.status);
+    if (!['active', 'inactive'].includes(s)) throw httpError(400, 'Invalid status');
+    out.status = s;
+  }
+  return out;
 };
 
 const checkDisplayRankConflict = async (displayRank, excludeId = null) => {
-  if (displayRank === undefined || displayRank <= 0) return null;
-  
+  if (displayRank === undefined || displayRank <= 0) return;
   const query = { displayRank };
   if (excludeId) query._id = { $ne: excludeId };
-  
-  const existingCategory = await Category.findOne(query);
-  return existingCategory 
-    ? `Rank ${displayRank} already assigned to "${existingCategory.name}"`
-    : null;
+  const existing = await Category.findOne(query);
+  if (existing) throw httpError(409, `Rank ${displayRank} already assigned to "${existing.name}"`);
 };
 
-// Get all categories with pagination
-exports.getCategories = handleAsyncRoute(async (req, res) => {
-  const { page, limit, skip } = getPaginationParams(req.query);
-
+exports.getCategories = asyncHandler(async (req, res) => {
+  const { page, limit, skip } = parsePagination(req.query, { defaultLimit: 10, maxLimit: 1000 });
   const [categories, total] = await Promise.all([
-    Category.find()
-      .skip(skip)
-      .limit(limit)
-      .sort({ displayRank: 1, createdAt: -1 }),
-    Category.countDocuments()
+    Category.find().skip(skip).limit(limit).sort({ displayRank: 1, createdAt: -1 }),
+    Category.countDocuments(),
   ]);
-  
-  res.json({
-    success: true,
-    categories,
-    pagination: {
-      page,
-      limit,
-      total,
-      pages: Math.ceil(total / limit)
-    }
-  });
+  res.json({ success: true, categories, pagination: { page, limit, total, pages: Math.ceil(total / limit) } });
 });
 
-// Get category by ID
-exports.getCategoryById = handleAsyncRoute(async (req, res) => {
-  const category = await Category.findById(req.params.id);
-  if (!category) {
-    return res.status(404).json({ success: false, message: 'Category not found' });
-  }
+exports.getCategoryById = asyncHandler(async (req, res) => {
+  const category = await Category.findById(toStr(req.params.id));
+  if (!category) throw httpError(404, 'Category not found');
   res.json({ success: true, category });
 });
 
-// Create category
-exports.createCategory = handleAsyncRoute(async (req, res) => {
-  const conflictMessage = await checkDisplayRankConflict(req.body.displayRank);
-  if (conflictMessage) {
-    return res.status(400).json({ success: false, message: conflictMessage });
-  }
-  
-  const category = await new Category(req.body).save();
+exports.createCategory = asyncHandler(async (req, res) => {
+  const data = pickCategory(req.body);
+  if (!data.name) throw httpError(400, 'name is required');
+  await checkDisplayRankConflict(data.displayRank);
+  const category = await new Category(data).save();
   res.status(201).json({ success: true, category });
 });
 
-// Update category
-exports.updateCategory = handleAsyncRoute(async (req, res) => {
-  const conflictMessage = await checkDisplayRankConflict(req.body.displayRank, req.params.id);
-  if (conflictMessage) {
-    return res.status(400).json({ success: false, message: conflictMessage });
-  }
-  
-  const category = await Category.findByIdAndUpdate(
-    req.params.id, 
-    req.body, 
-    { new: true, runValidators: true }
-  );
-  
-  if (!category) {
-    return res.status(404).json({ success: false, message: 'Category not found' });
-  }
-  
+exports.updateCategory = asyncHandler(async (req, res) => {
+  const data = pickCategory(req.body);
+  await checkDisplayRankConflict(data.displayRank, toStr(req.params.id));
+  const category = await Category.findByIdAndUpdate(toStr(req.params.id), { $set: data }, { new: true, runValidators: true });
+  if (!category) throw httpError(404, 'Category not found');
   res.json({ success: true, category });
 });
 
-// Delete category
-exports.deleteCategory = handleAsyncRoute(async (req, res) => {
-  const category = await Category.findByIdAndDelete(req.params.id);
-  if (!category) {
-    return res.status(404).json({ success: false, message: 'Category not found' });
-  }
+exports.deleteCategory = asyncHandler(async (req, res) => {
+  const category = await Category.findByIdAndDelete(toStr(req.params.id));
+  if (!category) throw httpError(404, 'Category not found');
   res.json({ success: true, message: 'Category deleted successfully' });
 });
 
-// Get all categories for homepage (sorted by display rank)
-exports.getAllCategories = handleAsyncRoute(async (req, res) => {
-  const categories = await Category.find()
-    .sort({ displayRank: 1, createdAt: -1 });
-  
+// Homepage (sorted by display rank)
+exports.getAllCategories = asyncHandler(async (req, res) => {
+  const categories = await Category.find().sort({ displayRank: 1, createdAt: -1 }).limit(1000);
   res.json({ success: true, categories });
 });

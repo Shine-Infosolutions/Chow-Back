@@ -4,11 +4,8 @@ const { verifyToken, verifyAdmin } = require('../middleware');
 
 // Admin Dashboard Route
 router.get('/dashboard', verifyToken, verifyAdmin, (req, res) => {
-  res.json({ 
-    success: true, 
-    message: 'Admin dashboard access granted',
-    user: req.user 
-  });
+  const { password, ...user } = req.user.toObject();
+  res.json({ success: true, message: 'Admin dashboard access granted', user });
 });
 
 module.exports = router;

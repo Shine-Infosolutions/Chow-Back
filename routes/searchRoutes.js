@@ -1,17 +1,13 @@
 const express = require('express');
 const router = express.Router();
 const searchController = require('../controllers/searchController');
+const { verifyToken, verifyAdmin } = require('../middleware');
 
-// Global search
-router.get('/', searchController.globalSearch);
+const admin = [verifyToken, verifyAdmin];
 
-// Search items with filters
-router.get('/items', searchController.searchItems);
-
-// Search customers
-router.get('/customers', searchController.searchCustomers);
-
-// Search orders
-router.get('/orders', searchController.searchOrders);
+router.get('/items', searchController.searchItems); // public storefront search
+router.get('/', admin, searchController.globalSearch);
+router.get('/customers', admin, searchController.searchCustomers);
+router.get('/orders', admin, searchController.searchOrders);
 
 module.exports = router;
